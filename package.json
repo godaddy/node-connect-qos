@@ -1,0 +1,29 @@
+{
+  "name": "node-connect-qos",
+  "version": "0.1.0",
+  "description": "Connect middleware that helps maintain a high quality of service during heavy traffic",
+  "main": "./lib/connect-qos.js",
+  "scripts": {
+    "test": "mocha test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.secureserver.net/PC/node-connect-qos"
+  },
+  "keywords": [
+    "connect",
+    "qos",
+    "quality",
+    "service",
+    "ddos"
+  ],
+  "author": "Aaron Silvas",
+  "license": "MIT",
+  "dependencies": {
+    "toobusy-js": "~0.3.1"
+  },
+  "devDependencies": {
+    "mocha": "~1.21.3",
+    "istanbul": "~0.3.0"
+  }
+}
