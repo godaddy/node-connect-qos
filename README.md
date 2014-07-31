@@ -77,7 +77,7 @@ For you tweakers out there, here's some levers to pull:
 ## TODO
 
 * Support for tracking top bad actors over time
-** Avoids small temporary bursts resulting in bad actor flag
-** Includes dampening factor
+  * Avoids small temporary bursts resulting in bad actor flag
+  * Includes dampening factor
 * Support for bad actor ranking
-** Only throttle the worst offenders
+  * Only throttle the worst offenders
