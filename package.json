@@ -1,5 +1,5 @@
 {
-  "name": "node-connect-qos",
+  "name": "connect-qos",
   "version": "0.1.0",
   "description": "Connect middleware that helps maintain a high quality of service during heavy traffic",
   "main": "./lib/connect-qos.js",
@@ -17,7 +17,10 @@
     "service",
     "ddos"
   ],
-  "author": "Aaron Silvas",
+  "author": {
+    "name": "Aaron Silvas",
+    "email": "asilvas@godaddy.com"
+  },
   "license": "MIT",
   "dependencies": {
     "toobusy-js": "~0.3.1"
