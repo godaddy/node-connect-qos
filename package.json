@@ -8,7 +8,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.secureserver.net/PC/node-connect-qos"
+    "url": "https://github.com/godaddy/node-connect-qos"
   },
   "keywords": [
     "connect",
