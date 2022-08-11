@@ -4,7 +4,8 @@
   "description": "Connect middleware that helps maintain a high quality of service during heavy traffic",
   "main": "./lib/connect-qos.js",
   "scripts": {
-    "test": "mocha test"
+    "test": "mocha test",
+    "lint": "eslint-godaddy lib/*"
   },
   "repository": {
     "type": "git",
@@ -23,10 +24,11 @@
   },
   "license": "MIT",
   "dependencies": {
-    "toobusy-js": "~0.5.1"
+    "toobusy-js": "^0.5.1"
   },
   "devDependencies": {
-    "mocha": "~1.21.3",
-    "istanbul": "~0.3.0"
+    "eslint-config-godaddy": "^6.1.0",
+    "istanbul": "~0.3.0",
+    "mocha": "~1.21.3"
   }
 }

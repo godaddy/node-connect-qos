@@ -32,7 +32,7 @@ Using Connect or Express?
 
 	http.createServer(app).listen(8392);
 
-	
+
 ## Getting Started with HTTP
 
 Real coders don't use middleware? We've got you covered...
@@ -49,7 +49,9 @@ Real coders don't use middleware? We've got you covered...
 		});
 	}).listen(8392);
 
+## Additional Methods
 
+Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor.
 
 ## Goals
 
@@ -72,8 +74,8 @@ For you tweakers out there, here's some levers to pull:
   identified, any user can be throttled during very heavy traffic.
 * hitRatio (default: 0.01) - Ratio of hits (0.01 equates to 1% of historySize)
   required to be identified as a **potential** bad actor.
-  
-  
+* errorStatusCode (default: 503) - The HTTP status code to return if the request has been throttled
+
 ## TODO
 
 * Support for tracking top bad actors over time
