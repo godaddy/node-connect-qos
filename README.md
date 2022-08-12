@@ -25,7 +25,7 @@ Using Connect or Express?
 	;
 
 	var app = connect()
-		.use(new QoS({ }))
+		.use(new QoS({ }).getMiddleware())
 		.use(function(req, res) {
 			res.end("Hello World!");
 		});
@@ -43,6 +43,7 @@ Real coders don't use middleware? We've got you covered...
 	;
 
 	var qos = new QoS({ });
+	var qosMiddleware = qos.getMiddleware();
 	http.createServer(function(req, res) {
 		qos(req, res, function() {
 			res.end("Hello World!");
