@@ -1,7 +1,11 @@
+## 0.3.1
+
+- **Fix** Options were not defaulting
+
 ## 0.3.0
 
-- `getMiddleware` is now part of the prototype so that instance functions
-  are accessible.
+- **Breaking** `getMiddleware` is now part of the prototype so that instance
+ functions are accessible
 
 ## 0.2.0
 
