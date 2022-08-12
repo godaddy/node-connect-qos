@@ -52,7 +52,7 @@ Real coders don't use middleware? We've got you covered...
 
 ### Middleware Options
 
-* `beforeThrottle(qosInstance, req, res)` - If a function is provided it will be
+* `beforeThrottle(qosInstance, req, reason)` - If a function is provided it will be
   invoked prior to throttling a request in case a decision is desired. Only if
 	the function explicitly returns `false` will the throttle request be denied,
 	not resulting in a `503` status.
