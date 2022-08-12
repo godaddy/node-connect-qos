@@ -50,6 +50,13 @@ Real coders don't use middleware? We've got you covered...
 		});
 	}).listen(8392);
 
+### Middleware Options
+
+* `beforeThrottle(qosInstance, req, res)` - If a function is provided it will be
+  invoked prior to throttling a request in case a decision is desired. Only if
+	the function explicitly returns `false` will the throttle request be denied,
+	not resulting in a `503` status.
+
 ## Additional Methods
 
 Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor.
