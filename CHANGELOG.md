@@ -1,3 +1,8 @@
+## 1.0.0
+
+- **Feature** Support for `getMiddleware({ beforeThrottle })`
+- **Feature** Support for `req.reason` for throttling
+
 ## 0.3.2
 
 - **Fix** getMiddleware was not referencing `this` instance
