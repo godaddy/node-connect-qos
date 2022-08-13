@@ -1,3 +1,7 @@
+## 1.0.1
+
+- **Fix** `options` was not being adhered to
+
 ## 1.0.0
 
 - **Feature** Support for `getMiddleware({ beforeThrottle })`
