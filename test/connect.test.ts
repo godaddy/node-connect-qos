@@ -1,6 +1,5 @@
 import { IncomingMessage } from 'http';
-import { Http2ServerRequest } from 'http2';
-import { default as ConnectQOS, BeforeThrottleFn } from '../src';
+import { default as ConnectQOS, BeforeThrottleFn, BadActorType } from '../src';
 import toobusy from 'toobusy-js';
 
 jest.mock('toobusy-js');
@@ -86,7 +85,7 @@ describe('getMiddleware', () => {
     toobusy.mockReturnValue(true);
     const req = { headers: {} } as IncomingMessage;
     middleware(req, { writeHead, end }, () => {});
-    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, 'userLag');
+    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, BadActorType.userLag);
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
   });
@@ -102,7 +101,7 @@ describe('getMiddleware', () => {
     toobusy.mockReturnValue(true);
     const req = { headers: {} } as IncomingMessage;
     middleware(req, { writeHead, end }, () => {});
-    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, 'badHost');
+    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, BadActorType.badHost);
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
   });
@@ -118,7 +117,7 @@ describe('getMiddleware', () => {
     toobusy.mockReturnValue(true);
     const req = { headers: {} } as IncomingMessage;
     middleware(req, { writeHead, end }, () => {});
-    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, 'badHost');
+    expect(beforeThrottle).toHaveBeenCalledWith(qos, req, BadActorType.badHost);
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
   });

@@ -93,6 +93,8 @@ For you tweakers out there, here's some levers to pull:
   flagged as bad actors, but throttling will only occur if `maxLag` is exceeded.
 * **hostWhitelist** `Set<string>` - If provided will never flag hosts as bad actors.
 * **ipWhitelist** `Set<string>` - If provided will never flag IPs as bad actors.
+* **behindProxy** (default: `false`) - `x-forwarded-for` header only supported
+  if this option is set to `true`.
 
 ## TODO
 

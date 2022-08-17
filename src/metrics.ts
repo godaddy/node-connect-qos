@@ -9,6 +9,13 @@ export type MetricsOptions = {
   ipBadActorSplit?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
+  behindProxy?: boolean;
+}
+
+export enum BadActorType {
+  badHost = 'badHost',
+  badIp = 'badIp',
+  userLag = 'userLag'
 }
 
 export class Metrics {
@@ -19,7 +26,8 @@ export class Metrics {
       ipBadActorSplit = 0.5,
       hostWhitelist = new Set(),
       ipWhitelist = new Set(),
-      waitForHistory = true
+      waitForHistory = true,
+      behindProxy = false
     } = (opts || {} as MetricsOptions);
     this.#hosts = new Map();
     this.#ips = new Map();
@@ -31,6 +39,7 @@ export class Metrics {
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#isReady = waitForHistory === false;
+    this.#behindProxy = behindProxy;
   }
 
   #hosts: Map<string, number>;
@@ -44,6 +53,7 @@ export class Metrics {
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #isReady: boolean;
+  #behindProxy: boolean;
 
   get hosts(): Map<string, number> {
     return this.#hosts;
@@ -89,17 +99,21 @@ export class Metrics {
     return this.#isReady;
   }
 
+  get behindProxy(): boolean {
+    return this.#behindProxy;
+  }
+
   trackRequest(req: IncomingMessage|Http2ServerRequest): void {
     this.isBadIp(req);
     this.isBadHost(req); // order matters since only host triggers history aggregation
   }
 
-  isBadActor(req:IncomingMessage|Http2ServerRequest): boolean|string {
+  isBadActor(req:IncomingMessage|Http2ServerRequest): boolean|BadActorType {
     // determine if bad actor but do not track as hits
     if (this.isBadHost(resolveHostFromRequest(req), false)) {
-      return 'badHost';
-    } else if (this.isBadIp(resolveIpFromRequest(req), false)) {
-      return 'badIp';
+      return BadActorType.badHost;
+    } else if (this.isBadIp(resolveIpFromRequest(req, this.behindProxy), false)) {
+      return BadActorType.badIp;
     }
 
     return false;
@@ -126,7 +140,7 @@ export class Metrics {
 
   isBadIp(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
     if (typeof ip === 'object') {
-      ip = resolveIpFromRequest(ip);
+      ip = resolveIpFromRequest(ip, this.behindProxy);
     }
 
     if (track) {
@@ -162,21 +176,19 @@ export class Metrics {
       need for `userLag` as well.
     */
 
-    // hosts
-    const sortedHosts = Array.from(this.#hosts).sort((a, b) => b[1] - a[1]);
-    const topHostCount = Math.floor(sortedHosts.length * this.hostBadActorSplit);
-    const topHosts = sortedHosts.slice(0, topHostCount);
-    this.#badHosts = new Map(topHosts);
-
-    // ips
-    const sortedIps = Array.from(this.#ips).sort((a, b) => b[1] - a[1]);
-    const topIpCount = Math.floor(sortedIps.length * this.ipBadActorSplit);
-    const topIps = sortedIps.slice(0, topIpCount);
-    this.#badIps = new Map(topIps);
+    this.#badHosts = getTopOffenders(this.#hosts, this.hostBadActorSplit);
+    this.#badIps = getTopOffenders(this.#ips, this.ipBadActorSplit);
   
     // reset
     this.#history = 0;
     this.#ips.clear();
     this.#hosts.clear();
   }
+}
+
+function getTopOffenders(collection: Map<string, number>, badActorSplit: number): Map<string, number> {
+  const sorted = Array.from(collection).sort((a, b) => b[1] - a[1]);
+  const topCount = Math.floor(sorted.length * badActorSplit);
+  const topArr = sorted.slice(0, topCount);
+  return new Map(topArr);
 }

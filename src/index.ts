@@ -1,4 +1,4 @@
-export { Metrics, MetricsOptions } from './metrics';
+export { Metrics, MetricsOptions, BadActorType } from './metrics';
 export {
   ConnectQOS as default,
   ConnectQOSOptions,

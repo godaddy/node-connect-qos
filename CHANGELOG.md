@@ -15,6 +15,8 @@
 - **Feature** Support for `hostWhitelist` and `ipWhitelist` options
   if you want to prevent certains hosts or IP's from ever being blocked
 - **Feature** Full test suite (that should have been in 1.0!)
+- **Security** Only support `x-forwarded-for` header if `behindProxy`
+  set to `true`.
 
 ## 1.0.1
 

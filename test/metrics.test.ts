@@ -1,6 +1,6 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
-import { Metrics } from '../src';
+import { Metrics, BadActorType } from '../src';
 
 describe('constructor', () => {
   it('defaults', () => {
@@ -54,7 +54,8 @@ describe('trackRequest', () => {
     const metrics = new Metrics();
     /* @ts-ignore */
     metrics.trackRequest({
-      headers: { 'x-forwarded-for': 'c' } 
+      headers: { },
+      socket: { remoteAddress: 'c' }
     } as IncomingMessage);
     expect(Array.from(metrics.hosts)).toEqual([['unknown', 1]]);
     expect(Array.from(metrics.ips)).toEqual([['c', 1]]);
@@ -90,17 +91,27 @@ describe('isBadActor', () => {
       headers: { 'host': 'a' }
     } as IncomingMessage;
     metrics.badHosts.set('a', 1);
-    expect(metrics.isBadActor(req)).toEqual('badHost');
+    expect(metrics.isBadActor(req)).toEqual(BadActorType.badHost);
   });
 
-  it('return `badIp` if bad IP', () => {
+  it('return `false` if bad IP but `behindProxy` is not enabled', () => {
     const metrics = new Metrics();
     /* @ts-ignore */
     const req = {
       headers: { 'x-forwarded-for': 'c' }
     } as IncomingMessage;
     metrics.badIps.set('c', 1);
-    expect(metrics.isBadActor(req)).toEqual('badIp');
+    expect(metrics.isBadActor(req)).toEqual(false);
+  });
+
+  it('return `badIp` if bad IP', () => {
+    const metrics = new Metrics({ behindProxy: true });
+    /* @ts-ignore */
+    const req = {
+      headers: { 'x-forwarded-for': 'c' }
+    } as IncomingMessage;
+    metrics.badIps.set('c', 1);
+    expect(metrics.isBadActor(req)).toEqual(BadActorType.badIp);
   });
 });
 

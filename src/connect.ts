@@ -1,5 +1,5 @@
 import toobusy from 'toobusy-js';
-import { Metrics, MetricsOptions } from './metrics';
+import { Metrics, MetricsOptions, BadActorType } from './metrics';
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
 
@@ -71,14 +71,14 @@ export class ConnectQOS {
     };  
   }
 
-  shouldThrottleRequest(req): string|boolean {
+  shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
     this.#metrics.trackRequest(req);
 
     if (this.tooBusy === true) {
       const badActor = this.#metrics.isBadActor(req);
       if (badActor) return badActor; // contains reason for bad actor
       if (this.#userLag && this.lag >= this.#userLag) {
-        return 'userLag'; // yes, throttle possibly innocent user
+        return BadActorType.userLag; // yes, throttle possibly innocent user
       }
     }
   
