@@ -1,3 +1,7 @@
+## 2.0.1
+
+- **Change** No longer export `ConnectQOS` as `default`, export as itself.
+
 ## 2.0.0
 
 - **Feature** `hitRatio` has been replaced by `hostBadActorSplit` and

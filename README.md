@@ -20,14 +20,13 @@ otherwise you may face an attack and not know about it.
 
 Using Connect or Express?
 
-	var
+	const 
 		connect = require("connect"),
-		http = require("http"),
-		QoS = require("connect-qos")
-	;
+		http = require("http");
+	const { ConnectQOS } = require("connect-qos");
 
 	var app = connect()
-		.use(new QoS({ }).getMiddleware())
+		.use(new ConnectQOS().getMiddleware())
 		.use(function(req, res) {
 			res.end("Hello World!");
 		});
@@ -39,12 +38,10 @@ Using Connect or Express?
 
 Real coders don't use middleware? We've got you covered...
 
-	var
-		http = require("http"),
-		QoS = require("connect-qos")
-	;
+	const http = require("http");
+	const { ConnectQOS } = require("connect-qos");
 
-	var qos = new QoS({ });
+	var qos = new ConnectQOS();
 	var qosMiddleware = qos.getMiddleware();
 	http.createServer(function(req, res) {
 		qos(req, res, function() {

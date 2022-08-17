@@ -1,6 +1,6 @@
 export { Metrics, MetricsOptions, BadActorType } from './metrics';
 export {
-  ConnectQOS as default,
+  ConnectQOS,
   ConnectQOSOptions,
   ConnectQOSMiddleware,
   BeforeThrottleFn,
