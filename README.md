@@ -1,5 +1,7 @@
 # connect-qos
 
+[![NPM](https://nodei.co/npm/connect-qos.png?mini=true)](https://nodei.co/npm/connect-qos/) [![Build Status](https://app.travis-ci.com/godaddy/connect-qos.svg?branch=main)](https://app.travis-ci.com/godaddy/connect-qos)
+
 Connect middleware that **helps** maintain a high quality of service during heavy traffic. The basic
 idea is to identify bad actors and not penalize legitimate traffic more than necessary until
 proper mitigation can be activated.
@@ -59,7 +61,8 @@ Real coders don't use middleware? We've got you covered...
 
 ## Additional Methods
 
-Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor.
+Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor. This can be done for TLS/SNI
+to provide additional layer 5 mitigations.
 
 ## Goals
 
@@ -73,21 +76,28 @@ Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` in
 
 For you tweakers out there, here's some levers to pull:
 
-* maxLag (default: 70) - Lag time in milliseconds before throttling kicks in.
+* **maxLag** (default: `70`) - Lag time in milliseconds before throttling kicks in.
   Default should typically suffice unless you support cpu-intensive operations.
-* historySize (default: 1000) - The length of request history to use in
+* **userLag** (default: `300`) - If defined, even if bad actors are not
+  identified, any user can be throttled during very heavy traffic.
+* **errorStatusCode** (default: `503`) - The HTTP status code to return if the request has been throttled
+* **historySize** (default: `1000`) - The length of request history to use in
   tracking bad actors. Greater the history the more accurate the results,
   but can also increase cpu usage.
-* userLag (default: 300) - If defined, even if bad actors are not
-  identified, any user can be throttled during very heavy traffic.
-* hitRatio (default: 0.01) - Ratio of hits (0.01 equates to 1% of historySize)
-  required to be identified as a **potential** bad actor.
-* errorStatusCode (default: 503) - The HTTP status code to return if the request has been throttled
+* **waitForHistory** (default: `true`) - Will never attempt to deny actors until
+  at least one window of history has been generated to avoid uneccessary `userLag`
+	throttling.
+* **hostBadActorSplit** (default: `0.5`) - The 50% highest traffic hosts will be
+  flagged as bad actors, but throttling will only occur if `maxLag` is exceeded.
+* **ipBadActorSplit** (default: `0.5`) - The 50% highest traffic IPs will be
+  flagged as bad actors, but throttling will only occur if `maxLag` is exceeded.
+* **hostWhitelist** `Set<string>` - If provided will never flag hosts as bad actors.
+* **ipWhitelist** `Set<string>` - If provided will never flag IPs as bad actors.
+* **behindProxy** (default: `false`) - `x-forwarded-for` header only supported
+  if this option is set to `true`.
 
 ## TODO
 
 * Support for tracking top bad actors over time
   * Avoids small temporary bursts resulting in bad actor flag
   * Includes dampening factor
-* Support for bad actor ranking
-  * Only throttle the worst offenders

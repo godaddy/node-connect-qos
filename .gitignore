@@ -40,3 +40,5 @@ node_modules/
 
 # New Relic
 newrelic_app.log
+
+lib/
