@@ -10,6 +10,12 @@ export type GetMiddlewareOptions = {
   beforeThrottle?: BeforeThrottleFn
 }
 
+export enum ActorStatus {
+  Good,
+  Bad,
+  Whitelisted
+}
+
 export interface ConnectQOSOptions extends MetricsOptions {
   minLag?: number;
   maxLag?: number;
@@ -132,51 +138,68 @@ export class ConnectQOS {
 
     this.#metrics.trackRequest(req);
 
-    if (this.isBadHost(req, false) === true) return BadActorType.badHost;
-    else if (this.isBadIp(req, false) === true) return BadActorType.badIp;
+    const hostStatus = this.getHostStatus(req, false);
+    const ipStatus = this.getIpStatus(req, false);
+
+    // never throttle whitelisted actor
+    if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
+
+    if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
+    else if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
     else if (this.lag >= this.#userLag) return BadActorType.userLag;
 
     // do not throttle user
     return false;  
   }
 
-  get tooBusy() {
+  get tooBusy(): boolean {
     return toobusy();
   }
 
-  get lag() {
+  get lag(): number {
     return toobusy.lag();
   }
 
-  isBadHost(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
-    // invoke even if not tooBusy as it tracks stats
-    const hostRatio = this.#metrics.getHostRatio(host, track);
-
-    if (!hostRatio || !this.tooBusy) return false;
-
+  get lagRatio(): number {
     // lagRatio = 0-1
-    const lagRatio = Math.min(1, (this.lag - this.minLag) / this.#lagRange);
+    return Math.min(1, (this.lag - this.minLag) / this.#lagRange);
+  }
 
-    // requiredThreshold = this.#minBadHostThreshold - this.#maxBadHostThreshold
-    const requiredThreshold = (lagRatio * this.#badHostRange) + this.#minBadHostThreshold;
+  getHostStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
+    // invoke even if not tooBusy as it tracks stats
+    const sourceRatio = this.#metrics.getHostRatio(source, track);
+
+    if (sourceRatio < 0) return ActorStatus.Whitelisted;
+
+    if (!sourceRatio || !this.tooBusy) return ActorStatus.Good;
+
+    // requiredThreshold = this.#minBadThreshold - this.#maxBadThreshold
+    const requiredThreshold = (this.lagRatio * this.#badHostRange) + this.#minBadHostThreshold;
 
     // if source meets or exceeds required threshold then it should be blocked
-    return hostRatio >= requiredThreshold;
+    return sourceRatio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
+  }
+
+  isBadHost(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
+    return this.getHostStatus(host, track) === ActorStatus.Bad;
+  }
+
+  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
+    // invoke even if not tooBusy as it tracks stats
+    const sourceRatio = this.#metrics.getIpRatio(source, track);
+
+    if (sourceRatio < 0) return ActorStatus.Whitelisted;
+
+    if (!sourceRatio || !this.tooBusy) return ActorStatus.Good;
+
+    // requiredThreshold = this.#minBadThreshold - this.#maxBadThreshold
+    const requiredThreshold = (this.lagRatio * this.#badIpRange) + this.#minBadIpThreshold;
+
+    // if source meets or exceeds required threshold then it should be blocked
+    return sourceRatio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
   }
 
   isBadIp(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
-    // invoke even if not tooBusy as it tracks stats
-    const ipRatio = this.#metrics.getIpRatio(ip, track);
-
-    if (!ipRatio || !this.tooBusy) return false;
-
-    // lagRatio = 0-1
-    const lagRatio = Math.min(1, (this.lag - this.minLag) / this.#lagRange);
-
-    // requiredThreshold = this.#minBadIpThreshold - this.#maxBadHostThreshold
-    const requiredThreshold = (lagRatio * this.#badIpRange) + this.#minBadIpThreshold;
-
-    // if source meets or exceeds required threshold then it should be blocked
-    return ipRatio >= requiredThreshold;
+    return this.getIpStatus(ip, track) === ActorStatus.Bad;
   }
 }

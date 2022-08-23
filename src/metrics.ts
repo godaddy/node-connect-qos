@@ -139,6 +139,9 @@ export class Metrics {
       host = resolveHostFromRequest(host);
     }
 
+    // reserved to indicate will never be a bad actor
+    if (this.#hostWhitelist.has(host)) return -1;
+
     let cache: CacheItem|undefined = this.#hosts.get(host);
 
     if (track) {
@@ -156,8 +159,7 @@ export class Metrics {
     }
 
     if (!cache
-      || this.#hostRequests < this.#minHostRequests
-      || this.#hostWhitelist.has(host))
+      || this.#hostRequests < this.#minHostRequests)
     { // does not minimum requirement
       return 0;
     }
@@ -170,6 +172,9 @@ export class Metrics {
     if (typeof ip === 'object') {
       ip = resolveIpFromRequest(ip, this.behindProxy);
     }
+
+    // reserved to indicate will never be a bad actor
+    if (this.#ipWhitelist.has(ip)) return -1;
 
     let cache: CacheItem|undefined = this.#ips.get(ip);
 
@@ -188,8 +193,7 @@ export class Metrics {
     }
 
     if (!cache
-      || this.#ipRequests < this.#minIpRequests
-      || this.#ipWhitelist.has(ip))
+      || this.#ipRequests < this.#minIpRequests)
     { // does not minimum requirement      
       return 0;
     }
