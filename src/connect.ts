@@ -132,16 +132,15 @@ export class ConnectQOS {
 
     this.#metrics.trackRequest(req);
 
-    // user lag takes priority even if no history is established to permit healthy recovery
-    if (this.lag >= this.#userLag) return BadActorType.userLag;
-    else if (this.isBadHost(req, false) === true) return BadActorType.badHost;
+    if (this.isBadHost(req, false) === true) return BadActorType.badHost;
     else if (this.isBadIp(req, false) === true) return BadActorType.badIp;
+    else if (this.lag >= this.#userLag) return BadActorType.userLag;
 
     // do not throttle user
     return false;  
   }
 
-  get tooBusy() { // if metrics are not ready, we cannot be too busy
+  get tooBusy() {
     return toobusy();
   }
 
