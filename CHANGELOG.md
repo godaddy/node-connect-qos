@@ -1,6 +1,26 @@
+## 3.0.0
+
+- **Feature** Mitigation strategy has shifted to use a lag range
+  (between `minLag` & `maxLag`) which is used to determine at any given
+  time how aggressive throttling should be. Throttling habits are now
+  proportional to the lag/load, and throttling is prioritized based
+  on the the worst offenders. This also removes the need for
+  `waitForHistory`, `hostBadActorSplit`, and `ipBadActorSplit`.
+  `minBadActorThreshold` & `maxBadActorThreshold` indicate the min/max
+  range for the requests that will be blocked in proportion to the lag
+- **Feature** Shifting strategies to an LRU in combination with
+  `minHostRequests` & `minIpRequests` allows us to much more quickly
+  begin blocking bad traffic (5x improvement at startup with default
+  config), in addition to progressive updates as statistics are
+  calculated in real time and no longer lag behind the giant
+  `historySize` window to detect shifts in traffic patterns
+- **Feature** With the addition of `exemptLocalAddress` we will no longer
+  block (by default) or even track localhost requests, which is
+  especially important for healthchecks not failing
+
 ## 2.0.1
 
-- **Change** No longer export `ConnectQOS` as `default`, export as itself.
+- **Change** No longer export `ConnectQOS` as `default`, export as itself
 
 ## 2.0.0
 

@@ -18,3 +18,23 @@ export function resolveIpFromRequest(req: IncomingMessage|Http2ServerRequest, be
     'unknown'
   ;
 }
+
+// subset of https://github.com/tinovyatkin/is-localhost-ip/blob/master/index.js#L13
+const IP_RANGES = [
+  // 127.0.0.0 - 127.255.255.255
+  /^(:{2}f{4}:)?127(?:\.\d{1,3}){3}$/,
+  // 192.168.0.0 - 192.168.255.255
+  /^(:{2}f{4}:)?192\.168(?:\.\d{1,3}){2}$/,
+  // fc00::/7
+  /^f[cd][\da-f]{2}(::1$|:[\da-f]{1,4}){1,7}$/,
+  // fe80::/10
+  /^fe[89ab][\da-f](::1$|:[\da-f]{1,4}){1,7}$/,
+];
+
+const IP_TESTER = new RegExp(
+  `^(${IP_RANGES.map((re) => re.source).join('|')})$`,
+);
+
+export function isLocalAddress(ip: string): boolean {
+  return IP_TESTER.test(ip);
+}

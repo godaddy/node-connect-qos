@@ -1,12 +1,13 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
 import { resolveHostFromRequest, resolveIpFromRequest } from './util';
+import LRU from 'lru-cache';
 
 export type MetricsOptions = {
   historySize?: number;
-  waitForHistory?: boolean;
-  hostBadActorSplit?: number;
-  ipBadActorSplit?: number;
+  maxAge?: number;
+  minHostRequests?: number;
+  minIpRequests?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   behindProxy?: boolean;
@@ -18,73 +19,102 @@ export enum BadActorType {
   userLag = 'userLag'
 }
 
+export type CacheItem = {
+  history: Array<number>; // time
+  hits: number;
+}
+
+export const REQUESTS_PER_PURGE: number = 1000;
+
+export const DEFAULT_HOST_WHITELIST = ['localhost', 'localhost:8080'];
+export const DEFAULT_IP_WHITELIST = [];
+
 export class Metrics {
   constructor(opts?: MetricsOptions) {
     const {
-      historySize = 1000,
-      hostBadActorSplit = 0.5,
-      ipBadActorSplit = 0.5,
-      hostWhitelist = new Set(),
-      ipWhitelist = new Set(),
-      waitForHistory = true,
+      historySize = 500,
+      maxAge = 1000 * 60 * 10, // 10 mins
+      minHostRequests = 50,
+      minIpRequests = 100,
+      hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
+      ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
       behindProxy = false
     } = (opts || {} as MetricsOptions);
-    this.#hosts = new Map();
-    this.#ips = new Map();
-    this.#badHosts = this.#badIps = new Map();
-    this.#history = 0;
+
+    if (minHostRequests > historySize) throw new Error(`${minHostRequests} minHostRequests cannot exceed ${historySize} historySize`)
+    if (minIpRequests > historySize) throw new Error(`${minIpRequests} minIpRequests cannot exceed ${historySize} historySize`)
+
+    const defaultLRUOptions: LRU.Options<string, CacheItem> = {
+      max: historySize,
+      //ttl: maxAge, // do NOT use ttl due to performance and we handle stale purges
+      allowStale: false,
+      updateAgeOnGet: true,
+      updateAgeOnHas: false
+    };
+    this.#hosts = new LRU({
+      ...defaultLRUOptions,
+      dispose: (value: CacheItem, key: string) => {
+        this.#hostRequests -= value.hits;
+      }
+    });
+    this.#ips = new LRU({
+      ...defaultLRUOptions,
+      dispose: (value: CacheItem, key: string) => {
+        this.#ipRequests -= value.hits;
+      }
+    });
+    this.#hostRequests = this.#ipRequests = 0;
     this.#historySize = historySize;
-    this.#hostBadActorSplit = hostBadActorSplit;
-    this.#ipBadActorSplit = ipBadActorSplit;
+    this.#maxAge = maxAge;
+    this.#minHostRequests = minHostRequests;
+    this.#minIpRequests = minIpRequests;
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
-    this.#isReady = waitForHistory === false;
     this.#behindProxy = behindProxy;
   }
 
-  #hosts: Map<string, number>;
-  #ips: Map<string, number>;
-  #badHosts: Map<string, number>;
-  #badIps: Map<string, number>;
-  #history: number;
+  #hosts: LRU<string, CacheItem>;
+  #ips: LRU<string, CacheItem>;
+  #hostRequests: number;
+  #ipRequests: number;
   #historySize: number;
-  #hostBadActorSplit: number;
-  #ipBadActorSplit: number;
+  #maxAge: number;
+  #minHostRequests: number;
+  #minIpRequests: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
-  #isReady: boolean;
   #behindProxy: boolean;
 
-  get hosts(): Map<string, number> {
+  get hosts(): LRU<string, CacheItem> {
     return this.#hosts;
   }
 
-  get ips(): Map<string, number> {
+  get ips(): LRU<string, CacheItem> {
     return this.#ips;
   }
 
-  get badHosts(): Map<string, number> {
-    return this.#badHosts;
+  get hostRequests(): number {
+    return this.#hostRequests;
   }
 
-  get badIps(): Map<string, number> {
-    return this.#badIps;
-  }
-
-  get history(): number {
-    return this.#history;
+  get ipRequests(): number {
+    return this.#ipRequests;
   }
 
   get historySize(): number {
     return this.#historySize;
   }
 
-  get hostBadActorSplit(): number {
-    return this.#hostBadActorSplit;
+  get maxAge(): number {
+    return this.#maxAge;
   }
 
-  get ipBadActorSplit(): number {
-    return this.#ipBadActorSplit;
+  get minHostRequests(): number {
+    return this.#minHostRequests;
+  }
+
+  get minIpRequests(): number {
+    return this.#minIpRequests;
   }
 
   get hostWhitelist(): Set<string> {
@@ -95,100 +125,110 @@ export class Metrics {
     return this.#ipWhitelist;
   }
 
-  get isReady(): boolean {
-    return this.#isReady;
-  }
-
   get behindProxy(): boolean {
     return this.#behindProxy;
   }
 
   trackRequest(req: IncomingMessage|Http2ServerRequest): void {
-    this.isBadIp(req);
-    this.isBadHost(req); // order matters since only host triggers history aggregation
+    this.getHostRatio(req);
+    this.getIpRatio(req); // order matters since only host triggers history aggregation
   }
 
-  isBadActor(req:IncomingMessage|Http2ServerRequest): boolean|BadActorType {
-    // determine if bad actor but do not track as hits
-    if (this.isBadHost(resolveHostFromRequest(req), false)) {
-      return BadActorType.badHost;
-    } else if (this.isBadIp(resolveIpFromRequest(req, this.behindProxy), false)) {
-      return BadActorType.badIp;
-    }
-
-    return false;
-  }
-
-  isBadHost(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
+  getHostRatio(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
     if (typeof host === 'object') {
       host = resolveHostFromRequest(host);
     }
 
+    let cache: CacheItem|undefined = this.#hosts.get(host);
+
     if (track) {
-      const count = (this.#hosts.get(host) || 0) + 1;
-      this.#hosts.set(host, count);
-  
-      // periodically aggregate data and identify bad actors
-      if (++this.#history >= this.#historySize) {
-        this.identifyBadActors();
-        this.#isReady = true;
-      }  
+      if (!cache) {
+        cache = { history: new Array(), hits: 0 };
+        this.#hosts.set(host, cache);
+      }
+      cache.hits++;
+      cache.history.push(Date.now());
+      this.#hostRequests++;
+
+      if (this.#hostRequests >= REQUESTS_PER_PURGE) {
+        this.#hostRequests -= purgeStale(this.#hosts, this.#maxAge);
+      }
     }
 
-    return this.#hostWhitelist.has(host) === false && this.#badHosts.has(host);
+    if (!cache
+      || this.#hostRequests < this.#minHostRequests
+      || this.#hostWhitelist.has(host))
+    { // does not minimum requirement
+      return 0;
+    }
+
+    // determine ratio
+    return cache.hits / this.#hostRequests;
   }
 
-  isBadIp(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
+  getIpRatio(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
     if (typeof ip === 'object') {
       ip = resolveIpFromRequest(ip, this.behindProxy);
     }
 
+    let cache: CacheItem|undefined = this.#ips.get(ip);
+
     if (track) {
-      const count = (this.#ips.get(ip) || 0) + 1;
-      this.#ips.set(ip, count);
+      if (!cache) {
+        cache = { history: new Array(), hits: 0 };
+        this.#ips.set(ip, cache);
+      }
+      cache.hits++;
+      cache.history.push(Date.now());
+      this.#ipRequests++;
+
+      if (this.#ipRequests >= REQUESTS_PER_PURGE) {
+        this.#ipRequests -= purgeStale(this.#ips, this.#maxAge);
+      }
     }
 
-    return this.#ipWhitelist.has(ip) === false && this.#badIps.has(ip);
-  }
+    if (!cache
+      || this.#ipRequests < this.#minIpRequests
+      || this.#ipWhitelist.has(ip))
+    { // does not minimum requirement      
+      return 0;
+    }
 
-  identifyBadActors(): void {
-    /* Philosophy
-      The basic idea is that for a given tracking window that we identify
-      the TOP OFFENDERS, regardless of ratios. During nominal windows
-      bad actors are irrelevant as they won't be looked at until the system
-      becomes too busy. But during an attack window, we want to be on the
-      lookout for as many possible actors as the amount of throughput
-      reduction desired is substantial. The default `BadActorSplit` of 0.5
-      simply means that we consider the most active 50% of traffic to
-      be susceptible to throttling.
-
-      Future:
-      There is an opportunity to support tiered throttling so the
-      aggressiveness of the throttling is porportional to how busy the system
-      becomes. For example, instead of a flat 50% split @ 70ms lag, it could
-      look something like:
-      * 10% split @ 70ms
-      * 20% split @ 80ms
-      * ...
-      * 90% split @ 160ms
-      
-      If this pattern ends up being necessary, it can/should replace the
-      need for `userLag` as well.
-    */
-
-    this.#badHosts = getTopOffenders(this.#hosts, this.hostBadActorSplit);
-    this.#badIps = getTopOffenders(this.#ips, this.ipBadActorSplit);
-  
-    // reset
-    this.#history = 0;
-    this.#ips.clear();
-    this.#hosts.clear();
+    // determine ratio
+    return cache.hits / this.#ipRequests;
   }
 }
 
-function getTopOffenders(collection: Map<string, number>, badActorSplit: number): Map<string, number> {
-  const sorted = Array.from(collection).sort((a, b) => b[1] - a[1]);
-  const topCount = Math.floor(sorted.length * badActorSplit);
-  const topArr = sorted.slice(0, topCount);
-  return new Map(topArr);
+// remove stale history and delete from LRU if history all stale,
+// and return the number of requests that were stale
+function purgeStale(cache: LRU<string, CacheItem>, maxAge: number): number {
+  let delta = 0;
+  const expiredAt = Date.now() - maxAge - 1;
+  const deleteFromCache = [];
+
+  for (let [key, value] of cache.entries()) {
+    let expiredCount = 0;
+    for (let time of value.history.values()) {
+      let expired = time <= expiredAt;
+      if (!expired) break;
+      expiredCount++;
+    }
+    if (expiredCount) {
+      if (expiredCount === value.history.length) {
+        // if everything is expired, delete from cache
+        deleteFromCache.push(key);
+      } else {
+        value.history = value.history.slice(expiredCount);
+      }
+      value.hits -= expiredCount;
+      delta += expiredCount;
+    }
+  }
+
+  // empty cache entries should be removed entirely
+  for (let key of deleteFromCache) {
+    cache.delete(key);
+  }
+
+  return delta;
 }
