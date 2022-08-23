@@ -58,8 +58,7 @@ Real coders don't use middleware? We've got you covered...
 
 ## Additional Methods
 
-Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor. This can be done for TLS/SNI
-to provide additional layer 5 mitigations.
+Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor. This can be done for TLS/SNI to provide additional layer 5 mitigations.
 
 ## Goals
 
@@ -73,28 +72,41 @@ to provide additional layer 5 mitigations.
 
 For you tweakers out there, here's some levers to pull:
 
-* **maxLag** (default: `70`) - Lag time in milliseconds before throttling kicks in.
+* **minLag** (default: `70`) - Lag time in milliseconds before throttling kicks in.
   Default should typically suffice unless you support cpu-intensive operations.
-* **userLag** (default: `300`) - If defined, even if bad actors are not
-  identified, any user can be throttled during very heavy traffic.
-* **errorStatusCode** (default: `503`) - The HTTP status code to return if the request has been throttled
-* **historySize** (default: `1000`) - The length of request history to use in
-  tracking bad actors. Greater the history the more accurate the results,
-  but can also increase cpu usage.
-* **waitForHistory** (default: `true`) - Will never attempt to deny actors until
-  at least one window of history has been generated to avoid uneccessary `userLag`
-	throttling.
-* **hostBadActorSplit** (default: `0.5`) - The 50% highest traffic hosts will be
-  flagged as bad actors, but throttling will only occur if `maxLag` is exceeded.
-* **ipBadActorSplit** (default: `0.5`) - The 50% highest traffic IPs will be
-  flagged as bad actors, but throttling will only occur if `maxLag` is exceeded.
-* **hostWhitelist** `Set<string>` - If provided will never flag hosts as bad actors.
-* **ipWhitelist** `Set<string>` - If provided will never flag IPs as bad actors.
+* **maxLag** (default: `300`) - The highest lag threshold which will block the
+  greatest amount of traffic determined by `maxBadHostThreshold` or `maxBadIpThreshold`.
+* **minBadHostThreshold** (default: `0.50`) - At `minLag` the fewest number of hosts
+  will be blocked. If a host equates to 50%+ of the traffic,
+	then that 50%+ will be blocked even at `minLag`.
+* **maxBadHostThreshold** (default: `0.01`) - At `maxLag` hosts will be blocked
+  if they meet or exceed 1% (by default) of all traffic.
+* **minBadIpThreshold** (default: `0.50`) - At `minLag` the fewest number of IPs
+  will be blocked. If a IP equates to 50% of the traffic,
+	then that 50% will be blocked even at `minLag`.
+* **maxBadIpThreshold** (default: `0.01`) - At `maxLag` IPs will be blocked
+  if they meet or exceed 1% (by default) of all traffic.
+* **minHostRequests** (default: `50`) - Minimum amount of host requests before
+  sufficient history to allow blocking biggest hitters if under load (>= `minLag`)
+* **minIpRequests** (default: `100`) - Minimum amount of IP requests before
+  sufficient history to allow blocking biggest hitters if under load (>= `minLag`)
+* **errorStatusCode** (default: `503`) - The HTTP status code to return if the
+  request has been throttled.
+* **exemptLocalAddress** (default: `true`) - By default local requests are exempt
+  from QOS. This is beneficial for local testing, but critical for services that
+	rely on healthchecks.
+* **historySize** (default: `500`) - The LRU history size to use in
+  tracking bad actors. Hosts and IPs both get their own dedicated LRU.
+* **hostWhitelist** `Set<string>(['localhost', 'localhost:8080'])` - If provided will never flag hosts as bad actors.
+* **ipWhitelist** `Set<string>([])` - If provided will never flag IPs as bad actors.
 * **behindProxy** (default: `false`) - `x-forwarded-for` header only supported
   if this option is set to `true`.
 
-## TODO
 
-* Support for tracking top bad actors over time
-  * Avoids small temporary bursts resulting in bad actor flag
-  * Includes dampening factor
+## Performance
+
+With quality of service being the entire purpose of this library needless to say
+performance is a critical influence in every decision. You can expect `connect-qos`
+to never be a bottleneck of any kind. Local tests on modest laptop easily
+exceeds 3.5K req/sec on a hello world http server. See for yourself with
+`npm run bench`.

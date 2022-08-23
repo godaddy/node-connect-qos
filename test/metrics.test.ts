@@ -1,33 +1,47 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
-import { Metrics, BadActorType } from '../src';
+import { Metrics, DEFAULT_HOST_WHITELIST, DEFAULT_IP_WHITELIST, REQUESTS_PER_PURGE } from '../src';
+
+global.Date.now = jest.fn();
+
+beforeEach(() => {
+  global.Date.now.mockReturnValue(0);
+});
 
 describe('constructor', () => {
   it('defaults', () => {
     const metrics = new Metrics();
-    expect(metrics.historySize).toEqual(1000);
-    expect(metrics.isReady).toEqual(false);
-    expect(metrics.hostBadActorSplit).toEqual(0.5);
-    expect(metrics.ipBadActorSplit).toEqual(0.5);
-    expect(Array.from(metrics.hostWhitelist)).toEqual([]);
-    expect(Array.from(metrics.ipWhitelist)).toEqual([]);
+    expect(metrics.historySize).toEqual(500);
+    expect(metrics.maxAge).toEqual(1000 * 60 * 10);
+    expect(metrics.minHostRequests).toEqual(50);
+    expect(metrics.minIpRequests).toEqual(100);
+    expect(Array.from(metrics.hostWhitelist)).toEqual(DEFAULT_HOST_WHITELIST);
+    expect(Array.from(metrics.ipWhitelist)).toEqual(DEFAULT_IP_WHITELIST);
   });
 
   it('overrides', () => {
     const metrics = new Metrics({
-      historySize: 500,
-      waitForHistory: false,
-      hostBadActorSplit: 0.6,
-      ipBadActorSplit: 0.4,
+      historySize: 400,
+      maxAge: 1000 * 60 * 5,
+      minHostRequests: 150,
+      minIpRequests: 200,
       hostWhitelist: new Set(['h1', 'h2']),
       ipWhitelist: new Set(['i1', 'i2'])
     });
-    expect(metrics.historySize).toEqual(500);
-    expect(metrics.isReady).toEqual(true);
-    expect(metrics.hostBadActorSplit).toEqual(0.6);
-    expect(metrics.ipBadActorSplit).toEqual(0.4);
+    expect(metrics.historySize).toEqual(400);
+    expect(metrics.maxAge).toEqual(1000 * 60 * 5);
+    expect(metrics.minHostRequests).toEqual(150);
+    expect(metrics.minIpRequests).toEqual(200);
     expect(Array.from(metrics.hostWhitelist)).toEqual(['h1', 'h2']);
     expect(Array.from(metrics.ipWhitelist)).toEqual(['i1', 'i2']);
+  });
+
+  it('throws if minHostRequests exceeds historySize', () => {
+    expect(() => new Metrics({ minHostRequests: 1000 })).toThrow();
+  });
+
+  it('throws if minIpRequests exceeds historySize', () => {
+    expect(() => new Metrics({ minIpRequests: 1000 })).toThrow();
   });
 });
 
@@ -37,8 +51,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { 'host': 'a' }
     } as IncomingMessage);
-    expect(Array.from(metrics.hosts)).toEqual([['a', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['unknown', 1]]);
+    expect(metrics.hosts.get('a')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1 });
   });
 
   it('http2.headers.:authority is valid', () => {
@@ -46,8 +60,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { ':authority': 'b' }
     } as Http2ServerRequest);
-    expect(Array.from(metrics.hosts)).toEqual([['b', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['unknown', 1]]);
+    expect(metrics.hosts.get('b')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1 });
   });
 
   it('http.headers.x-forwarded-for is valid', () => {
@@ -57,8 +71,8 @@ describe('trackRequest', () => {
       headers: { },
       socket: { remoteAddress: 'c' }
     } as IncomingMessage);
-    expect(Array.from(metrics.hosts)).toEqual([['unknown', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['c', 1]]);
+    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.ips.get('c')).toEqual({ history: [0], hits: 1 });
   });
 
   it('socket.remoteAddress is valid', () => {
@@ -68,82 +82,112 @@ describe('trackRequest', () => {
       headers: {},
       socket: { remoteAddress: 'd' }
     } as IncomingMessage);
-    expect(Array.from(metrics.hosts)).toEqual([['unknown', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['d', 1]]);
+    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.ips.get('d')).toEqual({ history: [0], hits: 1 });
   });
 });
 
-describe('isBadActor', () => {
-  it('return false on first usage', () => {
-    const metrics = new Metrics();
-    const req = {
-      headers: { 'host': 'a' }
-    } as IncomingMessage;
-    metrics.trackRequest(req);
-    expect(Array.from(metrics.hosts)).toEqual([['a', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['unknown', 1]]);
-    expect(metrics.isBadActor(req)).toEqual(false);
-  });
-
-  it('return `badHost` if bad host', () => {
-    const metrics = new Metrics();
-    const req = {
-      headers: { 'host': 'a' }
-    } as IncomingMessage;
-    metrics.badHosts.set('a', 1);
-    expect(metrics.isBadActor(req)).toEqual(BadActorType.badHost);
-  });
-
-  it('return `false` if bad IP but `behindProxy` is not enabled', () => {
+describe('LRU', () => {
+  it('invokes dispose to reset hostRequests', () => {
     const metrics = new Metrics();
     /* @ts-ignore */
-    const req = {
-      headers: { 'x-forwarded-for': 'c' }
-    } as IncomingMessage;
-    metrics.badIps.set('c', 1);
-    expect(metrics.isBadActor(req)).toEqual(false);
+    metrics.trackRequest({
+      headers: { host: 'a' }
+    } as IncomingMessage);
+    expect(metrics.hostRequests).toEqual(1);
+    metrics.hosts.clear();
+    expect(metrics.hostRequests).toEqual(0);
   });
 
-  it('return `badIp` if bad IP', () => {
-    const metrics = new Metrics({ behindProxy: true });
+  it('invokes dispose to reset ipRequests', () => {
+    const metrics = new Metrics();
     /* @ts-ignore */
-    const req = {
-      headers: { 'x-forwarded-for': 'c' }
-    } as IncomingMessage;
-    metrics.badIps.set('c', 1);
-    expect(metrics.isBadActor(req)).toEqual(BadActorType.badIp);
+    metrics.trackRequest({
+      headers: {},
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage);
+    expect(metrics.ipRequests).toEqual(1);
+    metrics.ips.clear();
+    expect(metrics.ipRequests).toEqual(0);
   });
 });
 
-describe('identifyBadActors', () => {
-  it('not invoked if insufficient history', () => {
-    const metrics = new Metrics();
+describe('getHostRatio', () => {
+  it(':authority respected', () => {
+    const metrics = new Metrics({ minHostRequests: 2 });
+    /* @ts-ignore */
     const req = {
-      headers: { 'host': 'a' }
+      headers: { ':authority': 'a' }
     } as IncomingMessage;
-    metrics.trackRequest(req);
-    expect(Array.from(metrics.hosts)).toEqual([['a', 1]]);
-    expect(Array.from(metrics.ips)).toEqual([['unknown', 1]]);
+    metrics.getHostRatio(req, true);
+    expect(metrics.getHostRatio(req, false)).toEqual(0); // insufficient history
+    metrics.getHostRatio(req, true);
+    expect(metrics.getHostRatio(req, false)).toEqual(1); // sufficient history
+    expect(metrics.getHostRatio('a', false)).toEqual(1); // by name also matches
   });
 
-  it('invoked if sufficient history', () => {
-    const metrics = new Metrics({ historySize: 3 });
-    expect(metrics.historySize).toEqual(3);
+  it('purge after REQUESTS_PER_PURGE', () => {
+    const metrics = new Metrics({ maxAge: 1000 });
+    const half = Math.floor(REQUESTS_PER_PURGE/2);
+    for (let i = 0; i < half; i++) {
+      /* @ts-ignore */
+      metrics.trackRequest({
+        headers: { host: 'a' }
+      } as IncomingMessage);
+    }
+    expect(metrics.hostRequests).toEqual(half);
+    expect(metrics.getHostRatio('a', false)).toEqual(1);
+    global.Date.now.mockReturnValue(2000);
+    for (let i = 0; i < half; i++) {
+      /* @ts-ignore */
+      metrics.trackRequest({
+        headers: { host: 'b' }
+      } as IncomingMessage);
+    }
+    expect(metrics.hostRequests).toEqual(half);
+    expect(metrics.hosts.get('a')).toEqual(undefined);
+    expect(metrics.getHostRatio('a', false)).toEqual(0); // they all expired
+    expect(metrics.getHostRatio('b', false)).toEqual(1);
+  });
+});
+
+describe('getIpRatio', () => {
+  it('x-forwarded-for respected', () => {
+    const metrics = new Metrics({ minIpRequests: 2, behindProxy: true });
+    /* @ts-ignore */
     const req = {
-      headers: { 'host': 'a' }
+      headers: { 'x-forwarded-for': 'a' }
     } as IncomingMessage;
-    metrics.trackRequest(req);
-    expect(metrics.history).toEqual(1);
-    expect(metrics.badHosts.get('a')).toBeUndefined;
-    expect(Array.from(metrics.hosts)).toEqual([['a', 1]]);
-    metrics.trackRequest(req);
-    expect(metrics.history).toEqual(2);
-    expect(metrics.badHosts.get('a')).toBeUndefined;
-    expect(Array.from(metrics.hosts)).toEqual([['a', 2]]);
-    req.headers.host = 'b';
-    metrics.trackRequest(req);
-    expect(metrics.history).toEqual(0); // reset
-    expect(metrics.badHosts.get('a')).toEqual(2);
-    expect(Array.from(metrics.hosts)).toEqual([]);
+    metrics.getIpRatio(req, true);
+    expect(metrics.getIpRatio(req, false)).toEqual(0); // insufficient history
+    metrics.getIpRatio(req, true);
+    expect(metrics.getIpRatio(req, false)).toEqual(1); // sufficient history
+    expect(metrics.getIpRatio('a', false)).toEqual(1); // by name also matches
+  });
+
+  it('purge after REQUESTS_PER_PURGE', () => {
+    const metrics = new Metrics({ maxAge: 1000 });
+    const half = Math.floor(REQUESTS_PER_PURGE/2);
+    for (let i = 0; i < half; i++) {
+      /* @ts-ignore */
+      metrics.trackRequest({
+        headers: { },
+        socket: { remoteAddress: 'a' }
+      } as IncomingMessage);
+    }
+    expect(metrics.ipRequests).toEqual(half);
+    expect(metrics.getIpRatio('a', false)).toEqual(1);
+    global.Date.now.mockReturnValue(2000);
+    for (let i = 0; i < half; i++) {
+      /* @ts-ignore */
+      metrics.trackRequest({
+        headers: { },
+        socket: { remoteAddress: 'b' }
+      } as IncomingMessage);
+    }
+    expect(metrics.ipRequests).toEqual(half);
+    expect(metrics.ips.get('a')).toEqual(undefined);
+    expect(metrics.getIpRatio('a', false)).toEqual(0); // they all expired
+    expect(metrics.getIpRatio('b', false)).toEqual(1);
   });
 });
