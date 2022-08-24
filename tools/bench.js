@@ -5,7 +5,7 @@ const PORT = Number(process.env.PORT) || 8080;
 const BENCH_TIME = 30000;
 const CONCURRENCY = 50;
 
-const qos = new ConnectQOS();
+const qos = new ConnectQOS({ exemptLocalAddress: false });
 const qosMiddleware = qos.getMiddleware();
 const httpHandler = (req, res) => {
   qosMiddleware(req, res, cb => {
