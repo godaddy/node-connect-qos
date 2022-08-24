@@ -1,3 +1,7 @@
+## 3.0.1
+
+- **Fix** `172.*` space added to localhost IP check to support docker
+
 ## 3.0.0
 
 - **Feature** Mitigation strategy has shifted to use a lag range
