@@ -1,4 +1,4 @@
-## 3.0.1
+## 3.0.2
 
 - **Fix** `172.*` space added to localhost IP check to support docker
 
