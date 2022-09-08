@@ -6,8 +6,8 @@ import LRU from 'lru-cache';
 export type MetricsOptions = {
   historySize?: number;
   maxAge?: number;
-  minHostRequests?: number;
-  minIpRequests?: number;
+  minHostRequests?: number|boolean;
+  minIpRequests?: number|boolean;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   behindProxy?: boolean;
@@ -79,8 +79,8 @@ export class Metrics {
   #ipRequests: number;
   #historySize: number;
   #maxAge: number;
-  #minHostRequests: number;
-  #minIpRequests: number;
+  #minHostRequests: number|boolean;
+  #minIpRequests: number|boolean;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #behindProxy: boolean;
@@ -109,11 +109,11 @@ export class Metrics {
     return this.#maxAge;
   }
 
-  get minHostRequests(): number {
+  get minHostRequests(): number|boolean {
     return this.#minHostRequests;
   }
 
-  get minIpRequests(): number {
+  get minIpRequests(): number|boolean {
     return this.#minIpRequests;
   }
 
@@ -135,6 +135,8 @@ export class Metrics {
   }
 
   getHostRatio(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
+    if (!this.#minHostRequests) return -1; // if monitoring is disabled treat as whitelisted
+
     if (typeof host === 'object') {
       host = resolveHostFromRequest(host);
     }
@@ -169,6 +171,8 @@ export class Metrics {
   }
 
   getIpRatio(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
+    if (!this.#minIpRequests) return -1; // if monitoring is disabled treat as whitelisted
+
     if (typeof ip === 'object') {
       ip = resolveIpFromRequest(ip, this.behindProxy);
     }

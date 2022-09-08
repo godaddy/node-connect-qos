@@ -113,6 +113,27 @@ describe('LRU', () => {
 });
 
 describe('getHostRatio', () => {
+  it('returns whitelisted if min set to false', () => {
+    const metrics = new Metrics({ minHostRequests: false });
+    /* @ts-ignore */
+    const req = {
+      headers: { ':authority': 'a' }
+    } as IncomingMessage;
+    expect(metrics.getHostRatio(req, false)).toEqual(-1); // whitelisted
+    expect(metrics.getHostRatio(req, true)).toEqual(-1); // whitelisted
+  });
+
+  it('returns whitelisted if in list', () => {
+    const metrics = new Metrics({ hostWhitelist: new Set(['a']) });
+    /* @ts-ignore */
+    const req = {
+      headers: { ':authority': 'a' }
+    } as IncomingMessage;
+    expect(metrics.getHostRatio(req, true)).toEqual(-1); // whitelisted
+    req.headers[':authority'] = 'b';
+    expect(metrics.getHostRatio(req, true)).toEqual(0); // whitelisted
+  });
+
   it(':authority respected', () => {
     const metrics = new Metrics({ minHostRequests: 2 });
     /* @ts-ignore */
@@ -152,6 +173,29 @@ describe('getHostRatio', () => {
 });
 
 describe('getIpRatio', () => {
+  it('returns whitelisted if min set to false', () => {
+    const metrics = new Metrics({ minIpRequests: false });
+    /* @ts-ignore */
+    const req = {
+      headers: { },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage;
+    expect(metrics.getIpRatio(req, false)).toEqual(-1); // whitelisted
+    expect(metrics.getIpRatio(req, true)).toEqual(-1); // whitelisted
+  });
+
+  it('returns whitelisted if in list', () => {
+    const metrics = new Metrics({ ipWhitelist: new Set(['a']) });
+    /* @ts-ignore */
+    const req = {
+      headers: { },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage;
+    expect(metrics.getIpRatio(req, true)).toEqual(-1); // whitelisted
+    req.socket.remoteAddress = 'b';
+    expect(metrics.getIpRatio(req, true)).toEqual(0); // whitelisted
+  });
+
   it('x-forwarded-for respected', () => {
     const metrics = new Metrics({ minIpRequests: 2, behindProxy: true });
     /* @ts-ignore */

@@ -1,3 +1,8 @@
+## 3.1.0
+
+- **Feature** Support for disabling `badHost` via `minHostRequests:false`
+  and disabling `badIp` via `minIpRequests:false`
+
 ## 3.0.2
 
 - **Fix** `172.*` space added to localhost IP check to support docker
