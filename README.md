@@ -87,9 +87,11 @@ For you tweakers out there, here's some levers to pull:
 * **maxBadIpThreshold** (default: `0.01`) - At `maxLag` IPs will be blocked
   if they meet or exceed 1% (by default) of all traffic.
 * **minHostRequests** (default: `50`) - Minimum amount of host requests before
-  sufficient history to allow blocking biggest hitters if under load (>= `minLag`)
+  sufficient history to allow blocking biggest hitters if under load (>= `minLag`).
+	You can disable host monitoring by setting this to `false`.
 * **minIpRequests** (default: `100`) - Minimum amount of IP requests before
-  sufficient history to allow blocking biggest hitters if under load (>= `minLag`)
+  sufficient history to allow blocking biggest hitters if under load (>= `minLag`).
+	You can disable IP monitoring by setting this to `false`.
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
 * **exemptLocalAddress** (default: `true`) - By default local requests are exempt
