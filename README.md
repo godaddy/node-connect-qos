@@ -55,6 +55,8 @@ Real coders don't use middleware? We've got you covered...
   invoked prior to throttling a request in case a decision is desired. Only if
 	the function explicitly returns `false` will the throttle request be denied,
 	not resulting in a `503` status.
+* `destroySocket` (default: `true`) - If denying bad actor also destroy the socket
+  to prevent reuse.
 
 ## Additional Methods
 

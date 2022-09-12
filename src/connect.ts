@@ -7,7 +7,8 @@ import { isLocalAddress } from './util';
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
 export type BeforeThrottleFn = (qos: ConnectQOS, req: IncomingMessage|Http2ServerRequest, reason: string) => boolean|undefined;
 export type GetMiddlewareOptions = {
-  beforeThrottle?: BeforeThrottleFn
+  beforeThrottle?: BeforeThrottleFn,
+  destroySocket?: boolean
 }
 
 export enum ActorStatus {
@@ -115,7 +116,7 @@ export class ConnectQOS {
     return this.#metrics;
   }
 
-  getMiddleware({ beforeThrottle }: GetMiddlewareOptions = {}) {
+  getMiddleware({ beforeThrottle, destroySocket = true }: GetMiddlewareOptions = {}) {
     const self = this;
     return function QOSMiddleware(req, res, next) {
       const reason = self.shouldThrottleRequest(req);
@@ -123,7 +124,8 @@ export class ConnectQOS {
         if (!beforeThrottle || beforeThrottle(self, req, reason as string) !== false) {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
           res.writeHead(self.#errorStatusCode);
-          return res.end();
+          res.end();
+          return void destroySocket && res.socket.destroy(); // if bad actor throw away connection!
         }
       }
   
