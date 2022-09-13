@@ -1,5 +1,5 @@
 import toobusy from 'toobusy-js';
-import { Metrics, MetricsOptions, BadActorType } from './metrics';
+import { Metrics, MetricsOptions, ActorStatus, BadActorType } from './metrics';
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
 import { isLocalAddress } from './util';
@@ -11,12 +11,6 @@ export type GetMiddlewareOptions = {
   destroySocket?: boolean
 }
 
-export enum ActorStatus {
-  Good,
-  Bad,
-  Whitelisted
-}
-
 export interface ConnectQOSOptions extends MetricsOptions {
   minLag?: number;
   maxLag?: number;
@@ -25,6 +19,8 @@ export interface ConnectQOSOptions extends MetricsOptions {
   maxBadHostThreshold?: number;
   minBadIpThreshold?: number;
   maxBadIpThreshold?: number;
+  maxHostRate?: number;
+  maxIpRate?: number;
   errorStatusCode?: number;
   exemptLocalAddress?: boolean;
 }
@@ -39,6 +35,8 @@ export class ConnectQOS {
       maxBadHostThreshold = 0.01, // requires 1% of traffic @ maxLag
       minBadIpThreshold = 0.50, // requires 50% of traffic @ minLag
       maxBadIpThreshold = 0.01, // requires 1% of traffic @ maxLag
+      maxHostRate = 0, // disabled by default
+      maxIpRate = 0, // disabled by default
       errorStatusCode = 503,
       exemptLocalAddress = true,
       ...metricOptions
@@ -53,6 +51,8 @@ export class ConnectQOS {
     this.#badHostRange = maxBadHostThreshold - minBadHostThreshold;
     this.#minBadIpThreshold = minBadIpThreshold;
     this.#maxBadIpThreshold = maxBadIpThreshold;
+    this.#maxHostRate = maxHostRate;
+    this.#maxIpRate = maxIpRate;
     this.#badIpRange = maxBadIpThreshold - minBadIpThreshold;
     this.#errorStatusCode = errorStatusCode;
     this.#exemptLocalAddress = exemptLocalAddress;
@@ -71,6 +71,8 @@ export class ConnectQOS {
   #badHostRange: number;
   #minBadIpThreshold: number;
   #maxBadIpThreshold: number;
+  #maxHostRate: number;
+  #maxIpRate: number;
   #badIpRange: number;
   #errorStatusCode: number;
   #metrics: Metrics;
@@ -104,6 +106,14 @@ export class ConnectQOS {
     return this.#maxBadIpThreshold;
   }
 
+  get maxHostRate(): number {
+    return this.#maxHostRate;
+  }
+
+  get maxIpRate(): number {
+    return this.#maxIpRate;
+  }
+
   get errorStatusCode(): number {
     return this.#errorStatusCode;
   }
@@ -125,7 +135,10 @@ export class ConnectQOS {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
           res.writeHead(self.#errorStatusCode);
           res.end();
-          return void destroySocket && res.socket.destroy(); // if bad actor throw away connection!
+          if (destroySocket && !res.socket.destroyed) {
+            res.socket.destroy(); // if bad actor throw away connection!
+          }
+          return;
         }
       }
   
@@ -169,17 +182,23 @@ export class ConnectQOS {
 
   getHostStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
     // invoke even if not tooBusy as it tracks stats
-    const sourceRatio = this.#metrics.getHostRatio(source, track);
+    const sourceInfo = this.#metrics.getHostInfo(source, track);
 
-    if (sourceRatio < 0) return ActorStatus.Whitelisted;
+    if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
 
-    if (!sourceRatio || !this.tooBusy) return ActorStatus.Good;
+    if (!sourceInfo) return ActorStatus.Good;
+    else if (!this.tooBusy) { // if NOT busy we rely on rate limiting, if enabled
+      if (!this.#maxHostRate) return ActorStatus.Good; // rate limiting disabled
+
+      return sourceInfo.rate > this.#maxHostRate ? ActorStatus.Bad : ActorStatus.Good;
+    }
+    // otherwise we block by ratios
 
     // requiredThreshold = this.#minBadThreshold - this.#maxBadThreshold
     const requiredThreshold = (this.lagRatio * this.#badHostRange) + this.#minBadHostThreshold;
 
     // if source meets or exceeds required threshold then it should be blocked
-    return sourceRatio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
+    return sourceInfo.ratio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
   }
 
   isBadHost(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
@@ -188,17 +207,23 @@ export class ConnectQOS {
 
   getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
     // invoke even if not tooBusy as it tracks stats
-    const sourceRatio = this.#metrics.getIpRatio(source, track);
+    const sourceInfo = this.#metrics.getIpInfo(source, track);
 
-    if (sourceRatio < 0) return ActorStatus.Whitelisted;
+    if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
 
-    if (!sourceRatio || !this.tooBusy) return ActorStatus.Good;
+    if (!sourceInfo) return ActorStatus.Good;
+    else if (!this.tooBusy) { // if NOT busy we rely on rate limiting, if enabled
+      if (!this.#maxIpRate) return ActorStatus.Good; // rate limiting disabled
+
+      return sourceInfo.rate > this.#maxIpRate ? ActorStatus.Bad : ActorStatus.Good;
+    }
+    // otherwise we block by ratios
 
     // requiredThreshold = this.#minBadThreshold - this.#maxBadThreshold
     const requiredThreshold = (this.lagRatio * this.#badIpRange) + this.#minBadIpThreshold;
 
     // if source meets or exceeds required threshold then it should be blocked
-    return sourceRatio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
+    return sourceInfo.ratio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
   }
 
   isBadIp(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
