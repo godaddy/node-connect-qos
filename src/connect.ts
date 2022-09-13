@@ -135,7 +135,7 @@ export class ConnectQOS {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
           res.writeHead(self.#errorStatusCode);
           res.end();
-          if (destroySocket && !res.socket.destroyed) {
+          if (destroySocket && res?.socket.destroyed === false) { // explicit destroyed check
             res.socket.destroy(); // if bad actor throw away connection!
           }
           return;

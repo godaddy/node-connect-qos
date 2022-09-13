@@ -95,7 +95,7 @@ describe('getMiddleware', () => {
     const writeHead = jest.fn();
     const end = jest.fn();
     const destroy = jest.fn();
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
@@ -108,7 +108,7 @@ describe('getMiddleware', () => {
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
     expect(destroy).not.toHaveBeenCalled;
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
@@ -123,7 +123,7 @@ describe('getMiddleware', () => {
     const writeHead = jest.fn();
     const end = jest.fn();
     const destroy = jest.fn();
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
@@ -131,7 +131,7 @@ describe('getMiddleware', () => {
     qos.isBadHost('unknown', true);
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
