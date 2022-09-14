@@ -1,11 +1,13 @@
 import { IncomingMessage } from 'http';
 import { ConnectQOS, BeforeThrottleFn, BadActorType } from '../src';
 import toobusy from 'toobusy-js';
-import { forEachChild } from 'typescript';
 
 jest.mock('toobusy-js');
 
+global.Date.now = jest.fn();
+
 beforeEach(() => {
+  global.Date.now.mockReturnValue(0);
   toobusy.mockReturnValue(false);
   toobusy.maxLag = jest.fn();
   toobusy.lag = jest.fn().mockReturnValue(0);  
@@ -50,7 +52,7 @@ describe('constructor', () => {
 describe('metrics', () => {
   it('defaults', () => {
     const qos = new ConnectQOS();
-    expect(qos.metrics.historySize).toEqual(500);
+    expect(qos.metrics.historySize).toEqual(300);
   });
 
   it('overrides', () => {
@@ -79,11 +81,62 @@ describe('getMiddleware', () => {
     expect(end).not.toHaveBeenCalled;
   });
 
+  it('beforeThrottle invoked if bad host', () => {
+    const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
+    const qos = new ConnectQOS({ minHostRequests: 1 });
+    const middleware = qos.getMiddleware({ beforeThrottle });
+    expect(typeof middleware).toEqual('function');
+    const writeHead = jest.fn();
+    const end = jest.fn();
+    const destroy = jest.fn();
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).not.toHaveBeenCalled;
+    expect(end).not.toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+    qos.isBadHost('unknown', true);
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    expect(beforeThrottle).toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).toHaveBeenCalled;
+  });
+
+  it('beforeThrottle invoked if bad host but not destroyed', () => {
+    const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
+    const qos = new ConnectQOS({ minHostRequests: 1 });
+    const middleware = qos.getMiddleware({ beforeThrottle, destroySocket: false });
+    expect(typeof middleware).toEqual('function');
+    const writeHead = jest.fn();
+    const end = jest.fn();
+    const destroy = jest.fn();
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).not.toHaveBeenCalled;
+    expect(end).not.toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+    qos.isBadHost('unknown', true);
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+  });
+
   it('throttled if toobusy', () => {
     const qos = new ConnectQOS({ minHostRequests: 10 });
     const middleware = qos.getMiddleware();
     expect(typeof middleware).toEqual('function');
-    expect(qos.metrics.getHostRatio('unknown', false)).toEqual(0);
+    expect(qos.metrics.getHostInfo('unknown', false)).toEqual(undefined);
     for (let i = 0; i < 10; i++) {
       qos.isBadHost('unknown', true);  
     }
@@ -91,8 +144,8 @@ describe('getMiddleware', () => {
     const end = jest.fn();
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
-    expect(qos.metrics.getHostRatio('unknown', false)).toEqual(1);
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end }, () => {});
+    expect(qos.metrics.getHostInfo('unknown', false).ratio).toEqual(1);
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroyed: true } }, () => {});
     expect(qos.isBadHost('unknown', false)).toEqual(true);
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
@@ -102,7 +155,7 @@ describe('getMiddleware', () => {
     const qos = new ConnectQOS({ minIpRequests: 10 });
     const middleware = qos.getMiddleware();
     expect(typeof middleware).toEqual('function');
-    expect(qos.metrics.getIpRatio('unknown', false)).toEqual(0);
+    expect(qos.metrics.getIpInfo('unknown', false)).toEqual(undefined);
     for (let i = 0; i < 10; i++) {
       qos.isBadIp('unknown', true);  
     }
@@ -110,8 +163,8 @@ describe('getMiddleware', () => {
     const end = jest.fn();
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
-    expect(qos.metrics.getIpRatio('unknown', false)).toEqual(1);
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end }, () => {});
+    expect(qos.metrics.getIpInfo('unknown', false)?.ratio).toEqual(1);
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroyed: true } }, () => {});
     expect(qos.isBadIp('unknown', false)).toEqual(true);
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
@@ -130,7 +183,7 @@ describe('getMiddleware', () => {
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
     const req = { headers: {} } as IncomingMessage;
-    middleware(req, { writeHead, end }, () => {});
+    middleware(req, { writeHead, end, socket: { destroyed: true } }, () => {});
     expect(beforeThrottle).toHaveBeenCalledWith(qos, req, BadActorType.badHost);
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
@@ -189,6 +242,13 @@ describe('isBadHost', () => {
     toobusy.lag.mockReturnValue(300);
     expect(qos.isBadHost('b', false)).toEqual(true);
   });
+
+  it('returns true if throttling bad hosts', () => {
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 1, maxHostRate: 1 });
+    expect(qos.isBadHost('a')).toEqual(false);
+    global.Date.now.mockReturnValue(100);
+    expect(qos.isBadHost('a')).toEqual(true);
+  });
 });
 
 describe('isBadIp', () => {
@@ -223,6 +283,14 @@ describe('isBadIp', () => {
     expect(qos.isBadIp('b', false)).toEqual(false);
     toobusy.lag.mockReturnValue(300);
     expect(qos.isBadIp('b', false)).toEqual(true);
+  });
+
+  it('returns true if throttling bad IPs', () => {
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minIpRequests: 1, maxIpRate: 1 });
+    expect(qos.isBadIp('a')).toEqual(false);
+    expect(qos.isBadIp('a')).toEqual(false);
+    global.Date.now.mockReturnValue(100);
+    expect(qos.isBadIp('a')).toEqual(true);
   });
 });
 
@@ -272,5 +340,25 @@ describe('shouldThrottleRequest', () => {
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' }
     } as IncomingMessage)).toEqual(BadActorType.userLag);
+  });
+
+  it('if host or IP is whitelisted do not throttle', () => {
+    const qos = new ConnectQOS({ minHostRequests: 1, minIpRequests: 1, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set(['goodIp']), exemptLocalAddress: false });
+    expect(qos.exemptLocalAddress).toEqual(false);
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodHost' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodHost' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badHost' }
+    } as IncomingMessage)).toEqual(BadActorType.badHost);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badHost' },
+      socket: { remoteAddress: 'goodIp' }
+    } as IncomingMessage)).toEqual(false);
   });
 });

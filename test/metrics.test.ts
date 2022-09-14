@@ -1,6 +1,7 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
 import { Metrics, DEFAULT_HOST_WHITELIST, DEFAULT_IP_WHITELIST, REQUESTS_PER_PURGE } from '../src';
+import { ActorStatus } from '../src/metrics';
 
 global.Date.now = jest.fn();
 
@@ -11,10 +12,12 @@ beforeEach(() => {
 describe('constructor', () => {
   it('defaults', () => {
     const metrics = new Metrics();
-    expect(metrics.historySize).toEqual(500);
-    expect(metrics.maxAge).toEqual(1000 * 60 * 10);
-    expect(metrics.minHostRequests).toEqual(50);
+    expect(metrics.historySize).toEqual(300);
+    expect(metrics.maxAge).toEqual(1000 * 60 * 2);
+    expect(metrics.minHostRequests).toEqual(30);
     expect(metrics.minIpRequests).toEqual(100);
+    expect(metrics.maxHostRate).toEqual(0);
+    expect(metrics.maxIpRate).toEqual(0);
     expect(Array.from(metrics.hostWhitelist)).toEqual(DEFAULT_HOST_WHITELIST);
     expect(Array.from(metrics.ipWhitelist)).toEqual(DEFAULT_IP_WHITELIST);
   });
@@ -25,6 +28,8 @@ describe('constructor', () => {
       maxAge: 1000 * 60 * 5,
       minHostRequests: 150,
       minIpRequests: 200,
+      maxHostRate: 1,
+      maxIpRate: 2,
       hostWhitelist: new Set(['h1', 'h2']),
       ipWhitelist: new Set(['i1', 'i2'])
     });
@@ -32,6 +37,8 @@ describe('constructor', () => {
     expect(metrics.maxAge).toEqual(1000 * 60 * 5);
     expect(metrics.minHostRequests).toEqual(150);
     expect(metrics.minIpRequests).toEqual(200);
+    expect(metrics.maxHostRate).toEqual(1);
+    expect(metrics.maxIpRate).toEqual(2);
     expect(Array.from(metrics.hostWhitelist)).toEqual(['h1', 'h2']);
     expect(Array.from(metrics.ipWhitelist)).toEqual(['i1', 'i2']);
   });
@@ -51,8 +58,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { 'host': 'a' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('a')).toEqual({ history: [0], hits: 1 });
-    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.hosts.get('a')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('http2.headers.:authority is valid', () => {
@@ -60,8 +67,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { ':authority': 'b' }
     } as Http2ServerRequest);
-    expect(metrics.hosts.get('b')).toEqual({ history: [0], hits: 1 });
-    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.hosts.get('b')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('http.headers.x-forwarded-for is valid', () => {
@@ -71,8 +78,8 @@ describe('trackRequest', () => {
       headers: { },
       socket: { remoteAddress: 'c' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1 });
-    expect(metrics.ips.get('c')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('c')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('socket.remoteAddress is valid', () => {
@@ -82,8 +89,8 @@ describe('trackRequest', () => {
       headers: {},
       socket: { remoteAddress: 'd' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1 });
-    expect(metrics.ips.get('d')).toEqual({ history: [0], hits: 1 });
+    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('d')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 });
 
@@ -112,15 +119,15 @@ describe('LRU', () => {
   });
 });
 
-describe('getHostRatio', () => {
+describe('getHostInfo', () => {
   it('returns whitelisted if min set to false', () => {
     const metrics = new Metrics({ minHostRequests: false });
     /* @ts-ignore */
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    expect(metrics.getHostRatio(req, false)).toEqual(-1); // whitelisted
-    expect(metrics.getHostRatio(req, true)).toEqual(-1); // whitelisted
+    expect(metrics.getHostInfo(req, false)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    expect(metrics.getHostInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
   });
 
   it('returns whitelisted if in list', () => {
@@ -129,9 +136,9 @@ describe('getHostRatio', () => {
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    expect(metrics.getHostRatio(req, true)).toEqual(-1); // whitelisted
+    expect(metrics.getHostInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
     req.headers[':authority'] = 'b';
-    expect(metrics.getHostRatio(req, true)).toEqual(0); // whitelisted
+    expect(metrics.getHostInfo(req, true)?.ratio).toEqual(0);
   });
 
   it(':authority respected', () => {
@@ -140,11 +147,11 @@ describe('getHostRatio', () => {
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    metrics.getHostRatio(req, true);
-    expect(metrics.getHostRatio(req, false)).toEqual(0); // insufficient history
-    metrics.getHostRatio(req, true);
-    expect(metrics.getHostRatio(req, false)).toEqual(1); // sufficient history
-    expect(metrics.getHostRatio('a', false)).toEqual(1); // by name also matches
+    metrics.getHostInfo(req, true);
+    expect(metrics.getHostInfo(req, false)?.ratio).toEqual(0); // insufficient history
+    metrics.getHostInfo(req, true);
+    expect(metrics.getHostInfo(req, false)?.ratio).toEqual(1); // sufficient history
+    expect(metrics.getHostInfo('a', false)?.ratio).toEqual(1); // by name also matches
   });
 
   it('purge after REQUESTS_PER_PURGE', () => {
@@ -157,7 +164,7 @@ describe('getHostRatio', () => {
       } as IncomingMessage);
     }
     expect(metrics.hostRequests).toEqual(half);
-    expect(metrics.getHostRatio('a', false)).toEqual(1);
+    expect(metrics.getHostInfo('a', false)?.ratio).toEqual(1);
     global.Date.now.mockReturnValue(2000);
     for (let i = 0; i < half; i++) {
       /* @ts-ignore */
@@ -167,12 +174,12 @@ describe('getHostRatio', () => {
     }
     expect(metrics.hostRequests).toEqual(half);
     expect(metrics.hosts.get('a')).toEqual(undefined);
-    expect(metrics.getHostRatio('a', false)).toEqual(0); // they all expired
-    expect(metrics.getHostRatio('b', false)).toEqual(1);
+    expect(metrics.getHostInfo('a', false)).toEqual(undefined); // they all expired
+    expect(metrics.getHostInfo('b', false)?.ratio).toEqual(1);
   });
 });
 
-describe('getIpRatio', () => {
+describe('getIpInfo', () => {
   it('returns whitelisted if min set to false', () => {
     const metrics = new Metrics({ minIpRequests: false });
     /* @ts-ignore */
@@ -180,8 +187,8 @@ describe('getIpRatio', () => {
       headers: { },
       socket: { remoteAddress: 'a' }
     } as IncomingMessage;
-    expect(metrics.getIpRatio(req, false)).toEqual(-1); // whitelisted
-    expect(metrics.getIpRatio(req, true)).toEqual(-1); // whitelisted
+    expect(metrics.getIpInfo(req, false)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    expect(metrics.getIpInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
   });
 
   it('returns whitelisted if in list', () => {
@@ -191,9 +198,9 @@ describe('getIpRatio', () => {
       headers: { },
       socket: { remoteAddress: 'a' }
     } as IncomingMessage;
-    expect(metrics.getIpRatio(req, true)).toEqual(-1); // whitelisted
+    expect(metrics.getIpInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
     req.socket.remoteAddress = 'b';
-    expect(metrics.getIpRatio(req, true)).toEqual(0); // whitelisted
+    expect(metrics.getIpInfo(req, true)?.ratio).toEqual(0);
   });
 
   it('x-forwarded-for respected', () => {
@@ -202,11 +209,11 @@ describe('getIpRatio', () => {
     const req = {
       headers: { 'x-forwarded-for': 'a' }
     } as IncomingMessage;
-    metrics.getIpRatio(req, true);
-    expect(metrics.getIpRatio(req, false)).toEqual(0); // insufficient history
-    metrics.getIpRatio(req, true);
-    expect(metrics.getIpRatio(req, false)).toEqual(1); // sufficient history
-    expect(metrics.getIpRatio('a', false)).toEqual(1); // by name also matches
+    metrics.getIpInfo(req, true);
+    expect(metrics.getIpInfo(req, false)?.ratio).toEqual(0); // insufficient history
+    metrics.getIpInfo(req, true);
+    expect(metrics.getIpInfo(req, false)?.ratio).toEqual(1); // sufficient history
+    expect(metrics.getIpInfo('a', false)?.ratio).toEqual(1); // by name also matches
   });
 
   it('purge after REQUESTS_PER_PURGE', () => {
@@ -220,7 +227,7 @@ describe('getIpRatio', () => {
       } as IncomingMessage);
     }
     expect(metrics.ipRequests).toEqual(half);
-    expect(metrics.getIpRatio('a', false)).toEqual(1);
+    expect(metrics.getIpInfo('a', false)?.ratio).toEqual(1);
     global.Date.now.mockReturnValue(2000);
     for (let i = 0; i < half; i++) {
       /* @ts-ignore */
@@ -231,7 +238,7 @@ describe('getIpRatio', () => {
     }
     expect(metrics.ipRequests).toEqual(half);
     expect(metrics.ips.get('a')).toEqual(undefined);
-    expect(metrics.getIpRatio('a', false)).toEqual(0); // they all expired
-    expect(metrics.getIpRatio('b', false)).toEqual(1);
+    expect(metrics.getIpInfo('a', false)).toEqual(undefined); // they all expired
+    expect(metrics.getIpInfo('b', false)?.ratio).toEqual(1);
   });
 });

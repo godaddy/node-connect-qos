@@ -8,9 +8,17 @@ export type MetricsOptions = {
   maxAge?: number;
   minHostRequests?: number|boolean;
   minIpRequests?: number|boolean;
+  maxHostRate?: number;
+  maxIpRate?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   behindProxy?: boolean;
+}
+
+export enum ActorStatus {
+  Good,
+  Bad,
+  Whitelisted
 }
 
 export enum BadActorType {
@@ -22,20 +30,28 @@ export enum BadActorType {
 export type CacheItem = {
   history: Array<number>; // time
   hits: number;
+  ratio: number;
+  rate: number;
 }
 
 export const REQUESTS_PER_PURGE: number = 1000;
 
+export const DEFAULT_HISTORY_SIZE: number = 300;
+export const DEFAULT_MAX_AGE: number = 1000 * 60 * 2; // 2 mins
+export const DEFAULT_MIN_HOST_REQUESTS: number = 30;
+export const DEFAULT_MIN_IP_REQUESTS: number = 100;
 export const DEFAULT_HOST_WHITELIST = ['localhost', 'localhost:8080'];
 export const DEFAULT_IP_WHITELIST = [];
 
 export class Metrics {
   constructor(opts?: MetricsOptions) {
     const {
-      historySize = 500,
-      maxAge = 1000 * 60 * 10, // 10 mins
-      minHostRequests = 50,
-      minIpRequests = 100,
+      historySize = DEFAULT_HISTORY_SIZE,
+      maxAge = DEFAULT_MAX_AGE,
+      minHostRequests = DEFAULT_MIN_HOST_REQUESTS,
+      minIpRequests = DEFAULT_MIN_IP_REQUESTS,
+      maxHostRate = 0, // disabled by default
+      maxIpRate = 0, // disabled by default
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
       ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
       behindProxy = false
@@ -68,6 +84,8 @@ export class Metrics {
     this.#maxAge = maxAge;
     this.#minHostRequests = minHostRequests;
     this.#minIpRequests = minIpRequests;
+    this.#maxHostRate = maxHostRate;
+    this.#maxIpRate = maxIpRate;
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#behindProxy = behindProxy;
@@ -81,6 +99,8 @@ export class Metrics {
   #maxAge: number;
   #minHostRequests: number|boolean;
   #minIpRequests: number|boolean;
+  #maxHostRate: number;
+  #maxIpRate: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #behindProxy: boolean;
@@ -99,6 +119,14 @@ export class Metrics {
 
   get ipRequests(): number {
     return this.#ipRequests;
+  }
+
+  get maxHostRate(): number {
+    return this.#maxHostRate;
+  }
+
+  get maxIpRate(): number {
+    return this.#maxIpRate;
   }
 
   get historySize(): number {
@@ -130,29 +158,30 @@ export class Metrics {
   }
 
   trackRequest(req: IncomingMessage|Http2ServerRequest): void {
-    this.getHostRatio(req);
-    this.getIpRatio(req); // order matters since only host triggers history aggregation
+    this.getHostInfo(req);
+    this.getIpInfo(req);
   }
 
-  getHostRatio(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
-    if (!this.#minHostRequests) return -1; // if monitoring is disabled treat as whitelisted
+  getHostInfo(host: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus|CacheItem|undefined {
+    if (!this.#minHostRequests) return ActorStatus.Whitelisted; // if monitoring is disabled treat as whitelisted
 
     if (typeof host === 'object') {
       host = resolveHostFromRequest(host);
     }
 
     // reserved to indicate will never be a bad actor
-    if (this.#hostWhitelist.has(host)) return -1;
+    if (this.#hostWhitelist.has(host)) return ActorStatus.Whitelisted;
 
     let cache: CacheItem|undefined = this.#hosts.get(host);
 
+    const now = Date.now();
     if (track) {
       if (!cache) {
-        cache = { history: new Array(), hits: 0 };
+        cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
         this.#hosts.set(host, cache);
       }
       cache.hits++;
-      cache.history.push(Date.now());
+      cache.history.push(now);
       this.#hostRequests++;
 
       if (this.#hostRequests >= REQUESTS_PER_PURGE) {
@@ -160,35 +189,39 @@ export class Metrics {
       }
     }
 
-    if (!cache
-      || this.#hostRequests < this.#minHostRequests)
-    { // does not minimum requirement
-      return 0;
+    if (cache) { // always precompute `rate` & `ratio` based on NOW
+      // update rate
+      const eldest = cache.history[0] ?? now;
+      const age = now - eldest;
+      cache.rate = (!age || cache.hits < this.#maxHostRate) ? 0 : ((cache.hits / age) * 1000);
+
+      // update ratio
+      cache.ratio = this.#hostRequests >= this.#minHostRequests ? cache.hits / this.#hostRequests : 0;
     }
 
-    // determine ratio
-    return cache.hits / this.#hostRequests;
+    return cache;
   }
 
-  getIpRatio(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): number {
-    if (!this.#minIpRequests) return -1; // if monitoring is disabled treat as whitelisted
+  getIpInfo(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus|CacheItem|undefined {
+    if (!this.#minIpRequests) return ActorStatus.Whitelisted; // if monitoring is disabled treat as whitelisted
 
     if (typeof ip === 'object') {
       ip = resolveIpFromRequest(ip, this.behindProxy);
     }
 
     // reserved to indicate will never be a bad actor
-    if (this.#ipWhitelist.has(ip)) return -1;
+    if (this.#ipWhitelist.has(ip)) return ActorStatus.Whitelisted;
 
     let cache: CacheItem|undefined = this.#ips.get(ip);
 
+    const now = Date.now();
     if (track) {
       if (!cache) {
-        cache = { history: new Array(), hits: 0 };
+        cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
         this.#ips.set(ip, cache);
       }
       cache.hits++;
-      cache.history.push(Date.now());
+      cache.history.push(now);
       this.#ipRequests++;
 
       if (this.#ipRequests >= REQUESTS_PER_PURGE) {
@@ -196,14 +229,17 @@ export class Metrics {
       }
     }
 
-    if (!cache
-      || this.#ipRequests < this.#minIpRequests)
-    { // does not minimum requirement      
-      return 0;
+    if (cache) { // always precompute `rate` based on NOW
+      // update rate
+      const eldest = cache.history[0] ?? now;
+      const age = now - eldest;
+      cache.rate = (!age || cache.hits < this.#maxIpRate) ? 0 : ((cache.hits / age) * 1000);
+
+      // update ratio
+      cache.ratio = this.#ipRequests >= this.#minIpRequests ? cache.hits / this.#ipRequests : 0;
     }
 
-    // determine ratio
-    return cache.hits / this.#ipRequests;
+    return cache;
   }
 }
 
@@ -227,8 +263,8 @@ function purgeStale(cache: LRU<string, CacheItem>, maxAge: number): number {
         deleteFromCache.push(key);
       } else {
         value.history = value.history.slice(expiredCount);
+        value.hits -= expiredCount;
       }
-      value.hits -= expiredCount;
       delta += expiredCount;
     }
   }

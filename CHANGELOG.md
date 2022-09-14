@@ -1,3 +1,12 @@
+## 3.3.0
+
+- **Feature** Support for rate limiting when no lag is present via
+  `maxHostRate` and/or `maxIpRate` options
+- **Tuning** `minHostRequests` default dropped from `50` to `30`
+  for faster reaction time, `maxAge` dropped from 10 minutes
+  to 2 minutes to avoid wasted memory, and `historySize` dropped
+  from `500` to `300` to avoid wasted memory.
+
 ## 3.2.0
 
 - **Feature** Support for disabling `badHost` via `minHostRequests:false`
