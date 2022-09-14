@@ -36,7 +36,7 @@ Using Connect or Express?
 
 ## Getting Started with HTTP
 
-Real coders don't use middleware? We've got you covered...
+Real coders don't use middleware? We've got you covered too...
 
 	const http = require("http");
 	const { ConnectQOS } = require("connect-qos");
@@ -44,7 +44,7 @@ Real coders don't use middleware? We've got you covered...
 	var qos = new ConnectQOS();
 	var qosMiddleware = qos.getMiddleware();
 	http.createServer(function(req, res) {
-		qos(req, res, function() {
+		qosMiddleware(req, res, function() {
 			res.end("Hello World!");
 		});
 	}).listen(8392);
