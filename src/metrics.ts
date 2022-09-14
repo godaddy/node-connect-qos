@@ -8,6 +8,8 @@ export type MetricsOptions = {
   maxAge?: number;
   minHostRequests?: number|boolean;
   minIpRequests?: number|boolean;
+  maxHostRate?: number;
+  maxIpRate?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   behindProxy?: boolean;
@@ -33,7 +35,6 @@ export type CacheItem = {
 }
 
 export const REQUESTS_PER_PURGE: number = 1000;
-export const RATE_MIN_HITS: number = 3;
 
 export const DEFAULT_HISTORY_SIZE: number = 300;
 export const DEFAULT_MAX_AGE: number = 1000 * 60 * 2; // 2 mins
@@ -49,6 +50,8 @@ export class Metrics {
       maxAge = DEFAULT_MAX_AGE,
       minHostRequests = DEFAULT_MIN_HOST_REQUESTS,
       minIpRequests = DEFAULT_MIN_IP_REQUESTS,
+      maxHostRate = 0, // disabled by default
+      maxIpRate = 0, // disabled by default
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
       ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
       behindProxy = false
@@ -81,6 +84,8 @@ export class Metrics {
     this.#maxAge = maxAge;
     this.#minHostRequests = minHostRequests;
     this.#minIpRequests = minIpRequests;
+    this.#maxHostRate = maxHostRate;
+    this.#maxIpRate = maxIpRate;
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#behindProxy = behindProxy;
@@ -94,6 +99,8 @@ export class Metrics {
   #maxAge: number;
   #minHostRequests: number|boolean;
   #minIpRequests: number|boolean;
+  #maxHostRate: number;
+  #maxIpRate: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #behindProxy: boolean;
@@ -112,6 +119,14 @@ export class Metrics {
 
   get ipRequests(): number {
     return this.#ipRequests;
+  }
+
+  get maxHostRate(): number {
+    return this.#maxHostRate;
+  }
+
+  get maxIpRate(): number {
+    return this.#maxIpRate;
   }
 
   get historySize(): number {
@@ -178,7 +193,7 @@ export class Metrics {
       // update rate
       const eldest = cache.history[0] ?? now;
       const age = now - eldest;
-      cache.rate = (!age || cache.hits < RATE_MIN_HITS) ? 0 : ((cache.hits / age) * 1000);
+      cache.rate = (!age || cache.hits < this.#maxHostRate) ? 0 : ((cache.hits / age) * 1000);
 
       // update ratio
       cache.ratio = this.#hostRequests >= this.#minHostRequests ? cache.hits / this.#hostRequests : 0;
@@ -218,7 +233,7 @@ export class Metrics {
       // update rate
       const eldest = cache.history[0] ?? now;
       const age = now - eldest;
-      cache.rate = (!age || cache.hits < RATE_MIN_HITS) ? 0 : ((cache.hits / age) * 1000);
+      cache.rate = (!age || cache.hits < this.#maxIpRate) ? 0 : ((cache.hits / age) * 1000);
 
       // update ratio
       cache.ratio = this.#ipRequests >= this.#minIpRequests ? cache.hits / this.#ipRequests : 0;

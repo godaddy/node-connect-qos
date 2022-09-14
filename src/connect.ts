@@ -19,8 +19,6 @@ export interface ConnectQOSOptions extends MetricsOptions {
   maxBadHostThreshold?: number;
   minBadIpThreshold?: number;
   maxBadIpThreshold?: number;
-  maxHostRate?: number;
-  maxIpRate?: number;
   errorStatusCode?: number;
   exemptLocalAddress?: boolean;
 }
@@ -35,8 +33,6 @@ export class ConnectQOS {
       maxBadHostThreshold = 0.01, // requires 1% of traffic @ maxLag
       minBadIpThreshold = 0.50, // requires 50% of traffic @ minLag
       maxBadIpThreshold = 0.01, // requires 1% of traffic @ maxLag
-      maxHostRate = 0, // disabled by default
-      maxIpRate = 0, // disabled by default
       errorStatusCode = 503,
       exemptLocalAddress = true,
       ...metricOptions
@@ -51,8 +47,6 @@ export class ConnectQOS {
     this.#badHostRange = maxBadHostThreshold - minBadHostThreshold;
     this.#minBadIpThreshold = minBadIpThreshold;
     this.#maxBadIpThreshold = maxBadIpThreshold;
-    this.#maxHostRate = maxHostRate;
-    this.#maxIpRate = maxIpRate;
     this.#badIpRange = maxBadIpThreshold - minBadIpThreshold;
     this.#errorStatusCode = errorStatusCode;
     this.#exemptLocalAddress = exemptLocalAddress;
@@ -71,8 +65,6 @@ export class ConnectQOS {
   #badHostRange: number;
   #minBadIpThreshold: number;
   #maxBadIpThreshold: number;
-  #maxHostRate: number;
-  #maxIpRate: number;
   #badIpRange: number;
   #errorStatusCode: number;
   #metrics: Metrics;
@@ -106,14 +98,6 @@ export class ConnectQOS {
     return this.#maxBadIpThreshold;
   }
 
-  get maxHostRate(): number {
-    return this.#maxHostRate;
-  }
-
-  get maxIpRate(): number {
-    return this.#maxIpRate;
-  }
-
   get errorStatusCode(): number {
     return this.#errorStatusCode;
   }
@@ -135,7 +119,7 @@ export class ConnectQOS {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
           res.writeHead(self.#errorStatusCode);
           res.end();
-          if (destroySocket && res?.socket.destroyed === false) { // explicit destroyed check
+          if (destroySocket && res.socket?.destroyed === false) { // explicit destroyed check
             res.socket.destroy(); // if bad actor throw away connection!
           }
           return;
@@ -188,9 +172,9 @@ export class ConnectQOS {
 
     if (!sourceInfo) return ActorStatus.Good;
     else if (!this.tooBusy) { // if NOT busy we rely on rate limiting, if enabled
-      if (!this.#maxHostRate) return ActorStatus.Good; // rate limiting disabled
+      if (!this.#metrics.maxHostRate) return ActorStatus.Good; // rate limiting disabled
 
-      return sourceInfo.rate > this.#maxHostRate ? ActorStatus.Bad : ActorStatus.Good;
+      return sourceInfo.rate > this.#metrics.maxHostRate ? ActorStatus.Bad : ActorStatus.Good;
     }
     // otherwise we block by ratios
 
@@ -213,9 +197,9 @@ export class ConnectQOS {
 
     if (!sourceInfo) return ActorStatus.Good;
     else if (!this.tooBusy) { // if NOT busy we rely on rate limiting, if enabled
-      if (!this.#maxIpRate) return ActorStatus.Good; // rate limiting disabled
+      if (!this.#metrics.maxIpRate) return ActorStatus.Good; // rate limiting disabled
 
-      return sourceInfo.rate > this.#maxIpRate ? ActorStatus.Bad : ActorStatus.Good;
+      return sourceInfo.rate > this.#metrics.maxIpRate ? ActorStatus.Bad : ActorStatus.Good;
     }
     // otherwise we block by ratios
 

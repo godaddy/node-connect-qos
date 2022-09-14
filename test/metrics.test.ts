@@ -16,6 +16,8 @@ describe('constructor', () => {
     expect(metrics.maxAge).toEqual(1000 * 60 * 2);
     expect(metrics.minHostRequests).toEqual(30);
     expect(metrics.minIpRequests).toEqual(100);
+    expect(metrics.maxHostRate).toEqual(0);
+    expect(metrics.maxIpRate).toEqual(0);
     expect(Array.from(metrics.hostWhitelist)).toEqual(DEFAULT_HOST_WHITELIST);
     expect(Array.from(metrics.ipWhitelist)).toEqual(DEFAULT_IP_WHITELIST);
   });
@@ -26,6 +28,8 @@ describe('constructor', () => {
       maxAge: 1000 * 60 * 5,
       minHostRequests: 150,
       minIpRequests: 200,
+      maxHostRate: 1,
+      maxIpRate: 2,
       hostWhitelist: new Set(['h1', 'h2']),
       ipWhitelist: new Set(['i1', 'i2'])
     });
@@ -33,6 +37,8 @@ describe('constructor', () => {
     expect(metrics.maxAge).toEqual(1000 * 60 * 5);
     expect(metrics.minHostRequests).toEqual(150);
     expect(metrics.minIpRequests).toEqual(200);
+    expect(metrics.maxHostRate).toEqual(1);
+    expect(metrics.maxIpRate).toEqual(2);
     expect(Array.from(metrics.hostWhitelist)).toEqual(['h1', 'h2']);
     expect(Array.from(metrics.ipWhitelist)).toEqual(['i1', 'i2']);
   });

@@ -23,8 +23,6 @@ describe('constructor', () => {
     expect(qos.maxBadHostThreshold).toEqual(0.01);
     expect(qos.minBadIpThreshold).toEqual(0.50);
     expect(qos.maxBadIpThreshold).toEqual(0.01);
-    expect(qos.maxHostRate).toEqual(0);
-    expect(qos.maxIpRate).toEqual(0);
     expect(qos.errorStatusCode).toEqual(503);
     expect(qos.exemptLocalAddress).toEqual(true);
   });
@@ -37,8 +35,6 @@ describe('constructor', () => {
       maxBadHostThreshold: 0.02,
       minBadIpThreshold: 0.65,
       maxBadIpThreshold: 0.03,
-      maxHostRate: 1,
-      maxIpRate: 2,
       errorStatusCode: 500,
       exemptLocalAddress: false
     });
@@ -48,8 +44,6 @@ describe('constructor', () => {
     expect(qos.maxBadHostThreshold).toEqual(0.02);
     expect(qos.minBadIpThreshold).toEqual(0.65);
     expect(qos.maxBadIpThreshold).toEqual(0.03);
-    expect(qos.maxHostRate).toEqual(1);
-    expect(qos.maxIpRate).toEqual(2);
     expect(qos.errorStatusCode).toEqual(500);
     expect(qos.exemptLocalAddress).toEqual(false);
   });
@@ -251,7 +245,6 @@ describe('isBadHost', () => {
 
   it('returns true if throttling bad hosts', () => {
     const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 1, maxHostRate: 1 });
-    expect(qos.isBadHost('a')).toEqual(false);
     expect(qos.isBadHost('a')).toEqual(false);
     global.Date.now.mockReturnValue(100);
     expect(qos.isBadHost('a')).toEqual(true);
