@@ -1,3 +1,21 @@
+## 4.0.0
+
+- **Feature** A subtle but major change no longer tracks
+  hosts & IPs if they are bad. This allows for accurate
+  rate limiting and auto-recovery when overwhelmed. This
+  change will also greatly reduce the memory footprint
+  required during times of high load
+- **Critical Fix** If monitoring of host or IP monitoring
+  was disabled (via `minHostRequests=0` or `minIpRequests=0`)
+  the middleware would cease to block any traffic as it
+  would behave as whitelisted
+- **Critical Fix** LRU eviction was resulting in incorrect
+  counts and thus skewing how ratios are calculated
+- **Tuning** Stale purging is now based on time instead of
+  request counts to provide more stable memory management.
+  Additionally `maxAge` default has been reduced from 2
+  to 1 minutes to avoid needless memory waste
+
 ## 3.3.0
 
 - **Feature** Support for rate limiting when no lag is present via
@@ -5,7 +23,7 @@
 - **Tuning** `minHostRequests` default dropped from `50` to `30`
   for faster reaction time, `maxAge` dropped from 10 minutes
   to 2 minutes to avoid wasted memory, and `historySize` dropped
-  from `500` to `300` to avoid wasted memory.
+  from `500` to `300` to avoid wasted memory
 
 ## 3.2.0
 

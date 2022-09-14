@@ -1,6 +1,6 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
-import { Metrics, DEFAULT_HOST_WHITELIST, DEFAULT_IP_WHITELIST, REQUESTS_PER_PURGE } from '../src';
+import { Metrics, DEFAULT_HOST_WHITELIST, DEFAULT_IP_WHITELIST, PURGE_DELAY } from '../src';
 import { ActorStatus } from '../src/metrics';
 
 global.Date.now = jest.fn();
@@ -13,7 +13,7 @@ describe('constructor', () => {
   it('defaults', () => {
     const metrics = new Metrics();
     expect(metrics.historySize).toEqual(300);
-    expect(metrics.maxAge).toEqual(1000 * 60 * 2);
+    expect(metrics.maxAge).toEqual(1000 * 60 * 1);
     expect(metrics.minHostRequests).toEqual(30);
     expect(metrics.minIpRequests).toEqual(100);
     expect(metrics.maxHostRate).toEqual(0);
@@ -120,14 +120,14 @@ describe('LRU', () => {
 });
 
 describe('getHostInfo', () => {
-  it('returns whitelisted if min set to false', () => {
+  it('returns Good if min set to false', () => {
     const metrics = new Metrics({ minHostRequests: false });
     /* @ts-ignore */
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    expect(metrics.getHostInfo(req, false)).toEqual(ActorStatus.Whitelisted); // whitelisted
-    expect(metrics.getHostInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    expect(metrics.getHostInfo(req, false)).toEqual(ActorStatus.Good);
+    expect(metrics.getHostInfo(req, true)).toEqual(ActorStatus.Good);
   });
 
   it('returns whitelisted if in list', () => {
@@ -136,9 +136,11 @@ describe('getHostInfo', () => {
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    expect(metrics.getHostInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    metrics.trackHost(req);
+    expect(metrics.getHostInfo(req)).toEqual(ActorStatus.Whitelisted);
     req.headers[':authority'] = 'b';
-    expect(metrics.getHostInfo(req, true)?.ratio).toEqual(0);
+    metrics.trackHost(req);
+    expect(metrics.getHostInfo(req)?.ratio).toEqual(0);
   });
 
   it(':authority respected', () => {
@@ -147,48 +149,41 @@ describe('getHostInfo', () => {
     const req = {
       headers: { ':authority': 'a' }
     } as IncomingMessage;
-    metrics.getHostInfo(req, true);
-    expect(metrics.getHostInfo(req, false)?.ratio).toEqual(0); // insufficient history
-    metrics.getHostInfo(req, true);
-    expect(metrics.getHostInfo(req, false)?.ratio).toEqual(1); // sufficient history
-    expect(metrics.getHostInfo('a', false)?.ratio).toEqual(1); // by name also matches
+    metrics.trackHost(req);
+    expect(metrics.getHostInfo(req)?.ratio).toEqual(0); // insufficient history
+    metrics.trackHost(req);
+    expect(metrics.getHostInfo(req)?.ratio).toEqual(1); // sufficient history
+    expect(metrics.getHostInfo('a')?.ratio).toEqual(1); // by name also matches
   });
 
-  it('purge after REQUESTS_PER_PURGE', () => {
-    const metrics = new Metrics({ maxAge: 1000 });
-    const half = Math.floor(REQUESTS_PER_PURGE/2);
-    for (let i = 0; i < half; i++) {
-      /* @ts-ignore */
-      metrics.trackRequest({
-        headers: { host: 'a' }
-      } as IncomingMessage);
-    }
-    expect(metrics.hostRequests).toEqual(half);
-    expect(metrics.getHostInfo('a', false)?.ratio).toEqual(1);
-    global.Date.now.mockReturnValue(2000);
-    for (let i = 0; i < half; i++) {
-      /* @ts-ignore */
-      metrics.trackRequest({
-        headers: { host: 'b' }
-      } as IncomingMessage);
-    }
-    expect(metrics.hostRequests).toEqual(half);
+  it('purge after PURGE_DELAY', () => {
+    const metrics = new Metrics({ maxAge: 1000, minHostRequests: 1 });
+    metrics.trackHost({
+      headers: { host: 'a' }
+    } as IncomingMessage);
+    expect(metrics.hostRequests).toEqual(1);
+    expect(metrics.getHostInfo('a')?.ratio).toEqual(1);
+    global.Date.now.mockReturnValue(PURGE_DELAY);
+    metrics.trackHost({
+      headers: { host: 'b' }
+    } as IncomingMessage);
+    expect(metrics.hostRequests).toEqual(1); // host 'a' should have been purged
     expect(metrics.hosts.get('a')).toEqual(undefined);
-    expect(metrics.getHostInfo('a', false)).toEqual(undefined); // they all expired
-    expect(metrics.getHostInfo('b', false)?.ratio).toEqual(1);
+    expect(metrics.getHostInfo('a')).toEqual(undefined); // they all expired
+    expect(metrics.getHostInfo('b')?.ratio).toEqual(1);
   });
 });
 
 describe('getIpInfo', () => {
-  it('returns whitelisted if min set to false', () => {
+  it('returns Good if min set to false', () => {
     const metrics = new Metrics({ minIpRequests: false });
     /* @ts-ignore */
     const req = {
       headers: { },
       socket: { remoteAddress: 'a' }
     } as IncomingMessage;
-    expect(metrics.getIpInfo(req, false)).toEqual(ActorStatus.Whitelisted); // whitelisted
-    expect(metrics.getIpInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    expect(metrics.getIpInfo(req, false)).toEqual(ActorStatus.Good);
+    expect(metrics.getIpInfo(req, true)).toEqual(ActorStatus.Good);
   });
 
   it('returns whitelisted if in list', () => {
@@ -198,9 +193,11 @@ describe('getIpInfo', () => {
       headers: { },
       socket: { remoteAddress: 'a' }
     } as IncomingMessage;
-    expect(metrics.getIpInfo(req, true)).toEqual(ActorStatus.Whitelisted); // whitelisted
+    metrics.trackIp(req);
+    expect(metrics.getIpInfo(req)).toEqual(ActorStatus.Whitelisted);
     req.socket.remoteAddress = 'b';
-    expect(metrics.getIpInfo(req, true)?.ratio).toEqual(0);
+    metrics.trackIp(req);
+    expect(metrics.getIpInfo(req)?.ratio).toEqual(0);
   });
 
   it('x-forwarded-for respected', () => {
@@ -209,36 +206,29 @@ describe('getIpInfo', () => {
     const req = {
       headers: { 'x-forwarded-for': 'a' }
     } as IncomingMessage;
-    metrics.getIpInfo(req, true);
-    expect(metrics.getIpInfo(req, false)?.ratio).toEqual(0); // insufficient history
-    metrics.getIpInfo(req, true);
-    expect(metrics.getIpInfo(req, false)?.ratio).toEqual(1); // sufficient history
-    expect(metrics.getIpInfo('a', false)?.ratio).toEqual(1); // by name also matches
+    metrics.trackIp(req);
+    expect(metrics.getIpInfo(req)?.ratio).toEqual(0); // insufficient history
+    metrics.trackIp(req);
+    expect(metrics.getIpInfo(req)?.ratio).toEqual(1); // sufficient history
+    expect(metrics.getIpInfo('a')?.ratio).toEqual(1); // by name also matches
   });
 
-  it('purge after REQUESTS_PER_PURGE', () => {
-    const metrics = new Metrics({ maxAge: 1000 });
-    const half = Math.floor(REQUESTS_PER_PURGE/2);
-    for (let i = 0; i < half; i++) {
-      /* @ts-ignore */
-      metrics.trackRequest({
-        headers: { },
-        socket: { remoteAddress: 'a' }
-      } as IncomingMessage);
-    }
-    expect(metrics.ipRequests).toEqual(half);
-    expect(metrics.getIpInfo('a', false)?.ratio).toEqual(1);
-    global.Date.now.mockReturnValue(2000);
-    for (let i = 0; i < half; i++) {
-      /* @ts-ignore */
-      metrics.trackRequest({
-        headers: { },
-        socket: { remoteAddress: 'b' }
-      } as IncomingMessage);
-    }
-    expect(metrics.ipRequests).toEqual(half);
+  it('purge after PURGE_DELAY', () => {
+    const metrics = new Metrics({ maxAge: 1000, minIpRequests: 1 });
+    metrics.trackIp({
+      headers: { },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage);
+    expect(metrics.ipRequests).toEqual(1);
+    expect(metrics.getIpInfo('a')?.ratio).toEqual(1);
+    global.Date.now.mockReturnValue(PURGE_DELAY);
+    metrics.trackIp({
+      headers: { },
+      socket: { remoteAddress: 'b' }
+    } as IncomingMessage);
+    expect(metrics.ipRequests).toEqual(1); // ip 'a' should have been purged
     expect(metrics.ips.get('a')).toEqual(undefined);
-    expect(metrics.getIpInfo('a', false)).toEqual(undefined); // they all expired
-    expect(metrics.getIpInfo('b', false)?.ratio).toEqual(1);
+    expect(metrics.getIpInfo('a')).toEqual(undefined); // they all expired
+    expect(metrics.getIpInfo('b')?.ratio).toEqual(1);
   });
 });

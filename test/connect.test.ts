@@ -243,11 +243,25 @@ describe('isBadHost', () => {
     expect(qos.isBadHost('b', false)).toEqual(true);
   });
 
+  it('returns true if blocking bad hosts', () => {
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 1 });
+    expect(qos.isBadHost('a')).toEqual(false);
+    expect(qos.metrics.hostRequests).toEqual(1);
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    expect(qos.isBadHost('a')).toEqual(true);
+    expect(qos.metrics.hostRequests).toEqual(1); // bad hosts won't track
+    expect(qos.metrics.getHostInfo('a')?.ratio).toEqual(1);
+  });
+
   it('returns true if throttling bad hosts', () => {
     const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 1, maxHostRate: 1 });
     expect(qos.isBadHost('a')).toEqual(false);
-    global.Date.now.mockReturnValue(100);
+    global.Date.now.mockReturnValue(1000);
+    expect(qos.isBadHost('a')).toEqual(false); // tracking is lagged behind status
+    expect(qos.metrics.getHostInfo('a')?.rate).toEqual(2);
     expect(qos.isBadHost('a')).toEqual(true);
+    expect(qos.metrics.getHostInfo('a')?.rate).toEqual(2); // bad hosts won't track
   });
 });
 
@@ -285,12 +299,25 @@ describe('isBadIp', () => {
     expect(qos.isBadIp('b', false)).toEqual(true);
   });
 
+  it('returns true if blocking bad IPs', () => {
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minIpRequests: 1 });
+    expect(qos.isBadIp('a')).toEqual(false);
+    expect(qos.metrics.ipRequests).toEqual(1);
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    expect(qos.isBadIp('a')).toEqual(true);
+    expect(qos.metrics.ipRequests).toEqual(1); // bad hosts won't track
+    expect(qos.metrics.getIpInfo('a')?.ratio).toEqual(1);
+  });
+
   it('returns true if throttling bad IPs', () => {
     const qos = new ConnectQOS({ exemptLocalAddress: false, minIpRequests: 1, maxIpRate: 1 });
     expect(qos.isBadIp('a')).toEqual(false);
-    expect(qos.isBadIp('a')).toEqual(false);
-    global.Date.now.mockReturnValue(100);
+    global.Date.now.mockReturnValue(1000);
+    expect(qos.isBadIp('a')).toEqual(false); // tracking is lagged behind status
+    expect(qos.metrics.getIpInfo('a')?.rate).toEqual(2);
     expect(qos.isBadIp('a')).toEqual(true);
+    expect(qos.metrics.getIpInfo('a')?.rate).toEqual(2); // bad IPs won't track
   });
 });
 
@@ -355,10 +382,57 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(false);
     expect(qos.shouldThrottleRequest({
       headers: { host: 'badHost' }
+    } as IncomingMessage)).toEqual(false); // first attempt hasn't satisified minHostRequests
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badHost' }
     } as IncomingMessage)).toEqual(BadActorType.badHost);
     expect(qos.shouldThrottleRequest({
       headers: { host: 'badHost' },
       socket: { remoteAddress: 'goodIp' }
     } as IncomingMessage)).toEqual(false);
+  });
+
+  it('if host monitoring disabled should still be able to throttle IP', () => {
+    const qos = new ConnectQOS({ minHostRequests: 0, minIpRequests: 2, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set([]), exemptLocalAddress: false });
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'ignoredHost' },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage)).toEqual(false); // hasn't satisified minIpRequests
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'ignoredHost' },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage)).toEqual(false); // hasn't satisified minIpRequests
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'ignoredHost' },
+      socket: { remoteAddress: 'a' }
+    } as IncomingMessage)).toEqual('badIp');
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'ignoredHost' },
+      socket: { remoteAddress: 'b' }
+    } as IncomingMessage)).toEqual(false); // alt hasn't satisified minIpRequests
+  });
+
+  it('if IP monitoring disabled should still be able to throttle hosts', () => {
+    const qos = new ConnectQOS({ minHostRequests: 2, minIpRequests: 0, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set([]), exemptLocalAddress: false });
+    toobusy.mockReturnValue(true);
+    toobusy.lag.mockReturnValue(70);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual(false); // hasn't satisified minHostRequests
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual(false); // hasn't satisified minHostRequests
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual('badHost');
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'b' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual(false); // alt hasn't satisified minIpRequests
   });
 });

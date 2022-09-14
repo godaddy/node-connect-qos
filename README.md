@@ -103,9 +103,9 @@ For you tweakers out there, here's some levers to pull:
 * **exemptLocalAddress** (default: `true`) - By default local requests are exempt
   from QOS. This is beneficial for local testing, but critical for services that
 	rely on healthchecks.
-* **historySize** (default: `500`) - The LRU history size to use in
+* **historySize** (default: `300`) - The LRU history size to use in
   tracking bad actors. Hosts and IPs both get their own dedicated LRU.
-* **maxAge** (default: `120000`) - Time (in ms) before history is purged.
+* **maxAge** (default: `60000`) - Time (in ms) before history is purged.
 * **hostWhitelist** `Set<string>(['localhost', 'localhost:8080'])` - If provided will never flag hosts as bad actors.
 * **ipWhitelist** `Set<string>([])` - If provided will never flag IPs as bad actors.
 * **behindProxy** (default: `false`) - `x-forwarded-for` header only supported
