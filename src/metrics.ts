@@ -166,29 +166,17 @@ export class Metrics {
   }
 
   getHostInfo(source: string|IncomingMessage|Http2ServerRequest): ActorStatus|CacheItem|undefined {
-    if (!this.#minHostRequests) return ActorStatus.Good; // if monitoring is disabled treat as Good
-
     if (typeof source === 'object') {
       source = resolveHostFromRequest(source);
     }
 
-    // reserved to indicate will never be a bad actor
-    if (this.#hostWhitelist.has(source)) return ActorStatus.Whitelisted;
-
-    let cache: CacheItem|undefined = this.#hosts.get(source);
-
-    if (cache) { // always precompute `rate` & `ratio` based on NOW
-      // update rate
-      const now = Date.now();
-      const eldest = cache.history[0] ?? now;
-      const age = now - eldest;
-      cache.rate = (!age || cache.hits < this.#maxHostRate) ? 0 : ((cache.hits / age) * 1000);
-
-      // update ratio
-      cache.ratio = this.#hostRequests >= this.#minHostRequests ? cache.hits / this.#hostRequests : 0;
-    }
-
-    return cache;
+    return getInfo(source, {
+      lru: this.#hosts,
+      requestCount: this.#hostRequests,
+      minRequests: this.#minHostRequests,
+      whitelist: this.#hostWhitelist,
+      maxRate: this.#maxHostRate
+    });
   }
 
   trackHost(source: string|IncomingMessage|Http2ServerRequest, cache?: CacheItem): CacheItem|undefined {
@@ -196,55 +184,31 @@ export class Metrics {
       source = resolveHostFromRequest(source);
     }
 
-    const now = Date.now();
-    if ((now - this.#hostPurgeTime) >= PURGE_DELAY) { // purge before adding
-      // NON-OBVIOUS BUG. We MUST track the return value
-      // and subtract AFTER, otherwise doing "this.#ipRequests -= purgeStale"
-      // will result in invalid tracking due to LRU dispose handler
-      const stale = purgeStale(this.#hosts, this.#maxAge);
-      this.#hostRequests -= stale;
-      this.#hostPurgeTime = now;
-    }
-
-    if (!cache) { // if cache not provided attempt to fetch
-      cache = this.#hosts.get(source);
-    }
-
-    if (!cache) {
-      cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
-      this.#hosts.set(source, cache);
-    }
-    cache.hits++;
-    cache.history.push(now);
+    const result = track(source, {
+      lru: this.#hosts,
+      cache,
+      maxAge: this.#maxAge,
+      purgeTime: this.#hostPurgeTime
+    });
+    this.#hostRequests -= result.stale;
+    this.#hostPurgeTime = result.purgeTime;
     this.#hostRequests++;
 
-    return cache;
+    return result.cache;
   }
 
   getIpInfo(source: string|IncomingMessage|Http2ServerRequest): ActorStatus|CacheItem|undefined {
-    if (!this.#minIpRequests) return ActorStatus.Good; // if monitoring is disabled treat as Good
-
     if (typeof source === 'object') {
       source = resolveIpFromRequest(source, this.behindProxy);
     }
 
-    // reserved to indicate will never be a bad actor
-    if (this.#ipWhitelist.has(source)) return ActorStatus.Whitelisted;
-
-    let cache: CacheItem|undefined = this.#ips.get(source);
-
-    if (cache) { // always precompute `rate` based on NOW
-      // update rate
-      const now = Date.now();
-      const eldest = cache.history[0] ?? now;
-      const age = now - eldest;
-      cache.rate = (!age || cache.hits < this.#maxIpRate) ? 0 : ((cache.hits / age) * 1000);
-
-      // update ratio
-      cache.ratio = this.#ipRequests >= this.#minIpRequests ? cache.hits / this.#ipRequests : 0;
-    }
-
-    return cache;
+    return getInfo(source, {
+      lru: this.#ips,
+      requestCount: this.#ipRequests,
+      minRequests: this.#minIpRequests,
+      whitelist: this.#ipWhitelist,
+      maxRate: this.#maxIpRate
+    });
   }
 
   trackIp(source: string|IncomingMessage|Http2ServerRequest, cache?: CacheItem): CacheItem|undefined {
@@ -252,30 +216,96 @@ export class Metrics {
       source = resolveIpFromRequest(source, this.behindProxy);
     }
 
-    const now = Date.now();
-    if ((now - this.#ipPurgeTime) >= PURGE_DELAY) { // purge before adding
-      // NON-OBVIOUS BUG. We MUST track the return value
-      // and subtract AFTER, otherwise doing "this.#ipRequests -= purgeStale"
-      // will result in invalid tracking due to LRU dispose handler
-      const stale = purgeStale(this.#ips, this.#maxAge);
-      this.#ipRequests -= stale;
-      this.#ipPurgeTime = now;
-    }
-
-    if (!cache) { // if cache not provided attempt to fetch
-      cache = this.#ips.get(source);
-    }
-
-    if (!cache) {
-      cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
-      this.#ips.set(source, cache);
-    }
-    cache.hits++;
-    cache.history.push(now);
+    const result = track(source, {
+      lru: this.#ips,
+      cache,
+      maxAge: this.#maxAge,
+      purgeTime: this.#ipPurgeTime
+    });
+    this.#ipRequests -= result.stale;
+    this.#ipPurgeTime = result.purgeTime;
     this.#ipRequests++;
 
-    return cache;
+    return result.cache;
   }
+}
+
+export type GetInfoOptions = {
+  lru: LRU<string, CacheItem>,
+  requestCount: number,
+  minRequests: number|boolean,
+  whitelist: Set<string>,
+  maxRate: number
+}
+
+function getInfo(source: string, {
+  lru,
+  requestCount,
+  minRequests,
+  whitelist,
+  maxRate
+}: GetInfoOptions): ActorStatus|CacheItem|undefined {
+  if (!minRequests) return ActorStatus.Good; // if monitoring is disabled treat as Good
+
+  // reserved to indicate will never be a bad actor
+  if (whitelist.has(source)) return ActorStatus.Whitelisted;
+
+  let cache: CacheItem|undefined = lru.get(source);
+
+  if (cache) { // always precompute `rate` & `ratio` based on NOW
+    // update rate
+    const now = Date.now();
+    const eldest = cache.history[0] ?? now;
+    const age = now - eldest;
+    cache.rate = (!age || cache.hits < maxRate) ? 0 : ((cache.hits / age) * 1000);
+
+    // update ratio
+    cache.ratio = requestCount >= minRequests ? cache.hits / requestCount : 0;
+  }
+
+  return cache;
+}
+
+export type TrackOptions = {
+  lru: LRU<string, CacheItem>,
+  cache?: CacheItem,
+  maxAge: number,
+  purgeTime: number
+}
+
+export type TrackResult = {
+  cache?: CacheItem,
+  stale: number,
+  purgeTime: number
+}
+
+function track(source: string, options: TrackOptions): TrackResult {
+  const { lru, maxAge } = options;
+  let { cache, purgeTime } = options;
+
+  let stale = 0;
+
+  const now = Date.now();
+  if ((now - purgeTime) >= PURGE_DELAY) { // purge before adding
+    // NON-OBVIOUS BUG. We MUST track the return value
+    // and subtract AFTER, otherwise doing "this.#ipRequests -= purgeStale"
+    // will result in invalid tracking due to LRU dispose handler
+    stale = purgeStale(lru, maxAge);
+    purgeTime = now;
+  }
+
+  if (!cache) { // if cache not provided attempt to fetch
+    cache = lru.get(source);
+  }
+
+  if (!cache) {
+    cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
+    lru.set(source, cache);
+  }
+  cache.hits++;
+  cache.history.push(now);
+
+  return { cache, stale, purgeTime };
 }
 
 // remove stale history and delete from LRU if history all stale,
