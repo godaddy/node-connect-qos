@@ -44,10 +44,10 @@ export class ConnectQOS {
     this.#userLag = userLag;
     this.#minBadHostThreshold = minBadHostThreshold;
     this.#maxBadHostThreshold = maxBadHostThreshold;
-    this.#badHostRange = maxBadHostThreshold - minBadHostThreshold;
+    this.#badHostRange = minBadHostThreshold - maxBadHostThreshold; // naming is a little confusing unless you read docs
     this.#minBadIpThreshold = minBadIpThreshold;
     this.#maxBadIpThreshold = maxBadIpThreshold;
-    this.#badIpRange = maxBadIpThreshold - minBadIpThreshold;
+    this.#badIpRange = minBadIpThreshold - maxBadIpThreshold; // naming is a little confusing unless you read docs
     this.#errorStatusCode = errorStatusCode;
     this.#exemptLocalAddress = exemptLocalAddress;
   
@@ -162,7 +162,7 @@ export class ConnectQOS {
 
   get lagRatio(): number {
     // lagRatio = 0-1
-    return Math.min(1, (this.lag - this.minLag) / this.#lagRange);
+    return this.lag > this.#minLag ? Math.min(1, (this.lag - this.#minLag) / this.#lagRange) : 0;
   }
 
   getHostStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
@@ -173,7 +173,7 @@ export class ConnectQOS {
       maxRate: this.#metrics.maxHostRate,
       lagRatio: this.lagRatio,
       badRange: this.#badHostRange,
-      minBadThreshold: this.#minBadHostThreshold
+      minBadThreshold: this.#maxBadHostThreshold // naming is a little confusing unless you read docs
     });
     if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
     
@@ -197,7 +197,7 @@ export class ConnectQOS {
       maxRate: this.#metrics.maxIpRate,
       lagRatio: this.lagRatio,
       badRange: this.#badIpRange,
-      minBadThreshold: this.#minBadIpThreshold
+      minBadThreshold: this.#maxBadIpThreshold // naming is a little confusing unless you read docs
     });
     
     if (track && status === ActorStatus.Good) {
@@ -240,11 +240,11 @@ function getStatus(sourceInfo: ActorStatus|CacheItem|undefined, {
       status = sourceInfo.rate > maxRate ? ActorStatus.Bad : ActorStatus.Good;
     }
   } else { // otherwise we block by ratios
-    const requiredThreshold = (lagRatio * badRange) + minBadThreshold;
+    const requiredThreshold = Math.max(minBadThreshold, (1-lagRatio) * badRange);
 
     // if source meets or exceeds required threshold then it should be blocked
     status = sourceInfo.ratio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
   }
-  
+
   return status;
 }
