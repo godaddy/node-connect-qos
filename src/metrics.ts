@@ -37,7 +37,7 @@ export type CacheItem = {
 export const PURGE_DELAY: number = 1000 * 10; // 10s
 
 export const DEFAULT_HISTORY_SIZE: number = 300;
-export const DEFAULT_MAX_AGE: number = 1000 * 60; // 60s
+export const DEFAULT_MAX_AGE: number = 1000 * 10; // 10s
 export const DEFAULT_MIN_HOST_REQUESTS: number = 30;
 export const DEFAULT_MIN_IP_REQUESTS: number = 100;
 export const DEFAULT_HOST_WHITELIST = ['localhost', 'localhost:8080'];

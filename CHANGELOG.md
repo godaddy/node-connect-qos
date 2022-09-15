@@ -1,3 +1,12 @@
+## 4.0.1
+
+- **Tuning** Default `maxAge` has been dropped from
+  60 to 10 seconds which greatly increases the accuracy
+  of throttling
+- **Fix** Lag ratios and thresholds were being
+  computed incorrectly and resulting in far fewer blocks
+  while lag/load is present than expected
+
 ## 4.0.0
 
 - **Feature** A subtle but major change no longer tracks
