@@ -229,18 +229,18 @@ describe('isBadHost', () => {
   });
 
   it('returns true if maxBadHostThreshold exceeded @ maxLag', () => {
-    const qos = new ConnectQOS({ minHostRequests: 2 });
-    expect(qos.isBadHost('a', false)).toEqual(false); // insufficient history
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 2, minLag: 100, maxLag: 200 });
     toobusy.mockReturnValue(true);
-    toobusy.lag.mockReturnValue(70);
-    for (let i = 0; i < 9; i++) {
-      qos.isBadHost('a', true);
-    }
+    qos.isBadHost('a', true);
+    expect(qos.isBadHost('a', false)).toEqual(false); // insufficient history
+    qos.isBadHost('a', true);  
     expect(qos.isBadHost('a', false)).toEqual(true);
-    qos.isBadHost('b', true);
-    expect(qos.isBadHost('b', false)).toEqual(false);
-    toobusy.lag.mockReturnValue(300);
-    expect(qos.isBadHost('b', false)).toEqual(true);
+    qos.isBadHost('b', true);  
+    expect(qos.isBadHost('b', false)).toEqual(false); // lag not high enough for 33% ratio to qualify
+    toobusy.lag.mockReturnValue(131);
+    expect(qos.isBadHost('b', false)).toEqual(false); // lag not quite high enough
+    toobusy.lag.mockReturnValue(132); // if ~33% of lag range, even one request will satisify (1/3)
+    expect(qos.isBadHost('b', false)).toEqual(true); // ratio still 33%, but lag high enough to qualify
   });
 
   it('returns true if blocking bad hosts', () => {
@@ -295,18 +295,18 @@ describe('isBadIp', () => {
   });
 
   it('returns true if maxBadIpThreshold exceeded @ maxLag', () => {
-    const qos = new ConnectQOS({ minIpRequests: 2 });
-    expect(qos.isBadIp('a', false)).toEqual(false); // insufficient history
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minIpRequests: 2, minLag: 100, maxLag: 200 });
     toobusy.mockReturnValue(true);
-    toobusy.lag.mockReturnValue(70);
-    for (let i = 0; i < 9; i++) {
-      qos.isBadIp('a', true);
-    }
+    qos.isBadIp('a', true);
+    expect(qos.isBadIp('a', false)).toEqual(false); // insufficient history
+    qos.isBadIp('a', true);  
     expect(qos.isBadIp('a', false)).toEqual(true);
-    qos.isBadIp('b', true);
-    expect(qos.isBadIp('b', false)).toEqual(false);
-    toobusy.lag.mockReturnValue(300);
-    expect(qos.isBadIp('b', false)).toEqual(true);
+    qos.isBadIp('b', true);  
+    expect(qos.isBadIp('b', false)).toEqual(false); // lag not high enough for 33% ratio to qualify
+    toobusy.lag.mockReturnValue(131);
+    expect(qos.isBadIp('b', false)).toEqual(false); // lag not quite high enough
+    toobusy.lag.mockReturnValue(132); // if ~33% of lag range, even one request will satisify (1/3)
+    expect(qos.isBadIp('b', false)).toEqual(true); // ratio still 33%, but lag high enough to qualify
   });
 
   it('returns true if blocking bad IPs', () => {

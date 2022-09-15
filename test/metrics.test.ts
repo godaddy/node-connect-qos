@@ -13,7 +13,7 @@ describe('constructor', () => {
   it('defaults', () => {
     const metrics = new Metrics();
     expect(metrics.historySize).toEqual(300);
-    expect(metrics.maxAge).toEqual(1000 * 60 * 1);
+    expect(metrics.maxAge).toEqual(1000 * 10);
     expect(metrics.minHostRequests).toEqual(30);
     expect(metrics.minIpRequests).toEqual(100);
     expect(metrics.maxHostRate).toEqual(0);
