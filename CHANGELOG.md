@@ -1,3 +1,7 @@
+## 4.1.0
+
+- **Feature** Normalize hosts to drop ports and `www` subdomain
+
 ## 4.0.1
 
 - **Tuning** Default `maxAge` has been dropped from
