@@ -1,11 +1,17 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
 
+const HOST_NORMALIZE_REGEX = /(^www\.)?([^:]+)(:\d+)?$/;
+
+export function normalizeHost(host: string): string {
+  return HOST_NORMALIZE_REGEX.exec(host.toLowerCase())[2];
+}
+
 export function resolveHostFromRequest(req: IncomingMessage|Http2ServerRequest): string {
   const authority: string = req.headers[':authority'] as string|undefined;
-  return authority ||
+  return normalizeHost(authority ||
     req.headers.host ||
-    'unknown'
+    'unknown')
   ;
 }
 

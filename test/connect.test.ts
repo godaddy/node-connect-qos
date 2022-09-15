@@ -10,7 +10,7 @@ beforeEach(() => {
   global.Date.now.mockReturnValue(0);
   toobusy.mockReturnValue(false);
   toobusy.maxLag = jest.fn();
-  toobusy.lag = jest.fn().mockReturnValue(0);  
+  toobusy.lag = jest.fn().mockReturnValue(0);
 });
 
 describe('constructor', () => {
@@ -138,7 +138,7 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     expect(qos.metrics.getHostInfo('unknown', false)).toEqual(undefined);
     for (let i = 0; i < 10; i++) {
-      qos.isBadHost('unknown', true);  
+      qos.isBadHost('unknown', true);
     }
     const writeHead = jest.fn();
     const end = jest.fn();
@@ -157,7 +157,7 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     expect(qos.metrics.getIpInfo('unknown', false)).toEqual(undefined);
     for (let i = 0; i < 10; i++) {
-      qos.isBadIp('unknown', true);  
+      qos.isBadIp('unknown', true);
     }
     const writeHead = jest.fn();
     const end = jest.fn();
@@ -176,7 +176,7 @@ describe('getMiddleware', () => {
     const middleware = qos.getMiddleware({ beforeThrottle });
     expect(typeof middleware).toEqual('function');
     for (let i = 0; i < 10; i++) {
-      qos.isBadHost('unknown', true);  
+      qos.isBadHost('unknown', true);
     }
     const writeHead = jest.fn();
     const end = jest.fn();
@@ -195,7 +195,7 @@ describe('getMiddleware', () => {
     const middleware = qos.getMiddleware({ beforeThrottle });
     expect(typeof middleware).toEqual('function');
     for (let i = 0; i < 10; i++) {
-      qos.isBadHost('unknown', true);  
+      qos.isBadHost('unknown', true);
     }
     const writeHead = jest.fn();
     const end = jest.fn();
@@ -221,10 +221,10 @@ describe('isBadHost', () => {
     toobusy.lag.mockReturnValue(70);
     expect(qos.isBadHost('unknown', false)).toEqual(false); // insufficient history
     for (let i = 0; i < 9; i++) {
-      qos.isBadHost('unknown', true);  
+      qos.isBadHost('unknown', true);
     }
     expect(qos.isBadHost('unknown', false)).toEqual(false); // insufficient history
-    qos.isBadHost('unknown', true);  
+    qos.isBadHost('unknown', true);
     expect(qos.isBadHost('unknown', false)).toEqual(true);
   });
 
@@ -263,6 +263,16 @@ describe('isBadHost', () => {
     expect(qos.isBadHost('a')).toEqual(true);
     expect(qos.metrics.getHostInfo('a')?.rate).toEqual(2); // bad hosts won't track
   });
+
+  it('normalizes host correctly and identifies bad host', () => {
+    const qos = new ConnectQOS({ exemptLocalAddress: false, minHostRequests: 1, maxHostRate: 1 });
+    expect(qos.isBadHost('a.com:443')).toEqual(false);
+    global.Date.now.mockReturnValue(1000);
+    expect(qos.isBadHost('a.com')).toEqual(false); // tracking is lagged behind status
+    expect(qos.metrics.getHostInfo('www.a.com')?.rate).toEqual(2);
+    expect(qos.isBadHost('a.com:443')).toEqual(true);
+    expect(qos.metrics.getHostInfo('www.a.com:8080')?.rate).toEqual(2); // bad hosts won't track
+  });
 });
 
 describe('isBadIp', () => {
@@ -277,10 +287,10 @@ describe('isBadIp', () => {
     toobusy.lag.mockReturnValue(70);
     expect(qos.isBadIp('unknown', false)).toEqual(false); // insufficient history
     for (let i = 0; i < 9; i++) {
-      qos.isBadIp('unknown', true);  
+      qos.isBadIp('unknown', true);
     }
     expect(qos.isBadIp('unknown', false)).toEqual(false); // insufficient history
-    qos.isBadIp('unknown', true);  
+    qos.isBadIp('unknown', true);
     expect(qos.isBadIp('unknown', false)).toEqual(true);
   });
 
@@ -328,7 +338,7 @@ describe('exemptLocalAddress', () => {
     toobusy.lag.mockReturnValue(70);
     expect(qos.isBadIp('127.0.0.1', false)).toEqual(false); // insufficient history
     for (let i = 0; i < 10; i++) {
-      qos.isBadIp('127.0.0.1', true);  
+      qos.isBadIp('127.0.0.1', true);
     }
     expect(qos.isBadIp('127.0.0.1', false)).toEqual(true);
     // even though it's a bad IP, the connect path will never block a local IP
@@ -344,7 +354,7 @@ describe('exemptLocalAddress', () => {
     toobusy.lag.mockReturnValue(70);
     expect(qos.isBadIp('127.0.0.1', false)).toEqual(false); // insufficient history
     for (let i = 0; i < 10; i++) {
-      qos.isBadIp('127.0.0.1', true);  
+      qos.isBadIp('127.0.0.1', true);
     }
     expect(qos.isBadIp('127.0.0.1', false)).toEqual(true);
     expect(qos.shouldThrottleRequest({
@@ -370,30 +380,30 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('if host or IP is whitelisted do not throttle', () => {
-    const qos = new ConnectQOS({ minHostRequests: 1, minIpRequests: 1, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set(['goodIp']), exemptLocalAddress: false });
+    const qos = new ConnectQOS({ minHostRequests: 1, minIpRequests: 1, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set(['goodIp']), exemptLocalAddress: false });
     expect(qos.exemptLocalAddress).toEqual(false);
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'goodHost' }
+      headers: { host: 'goodhost.com' }
     } as IncomingMessage)).toEqual(false);
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'goodHost' }
+      headers: { host: 'goodhost.com' }
     } as IncomingMessage)).toEqual(false);
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'badHost' }
+      headers: { host: 'badhost.com' }
     } as IncomingMessage)).toEqual(false); // first attempt hasn't satisified minHostRequests
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'badHost' }
+      headers: { host: 'badhost.com' }
     } as IncomingMessage)).toEqual(BadActorType.badHost);
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'badHost' },
+      headers: { host: 'badhost.com' },
       socket: { remoteAddress: 'goodIp' }
     } as IncomingMessage)).toEqual(false);
   });
 
   it('if host monitoring disabled should still be able to throttle IP', () => {
-    const qos = new ConnectQOS({ minHostRequests: 0, minIpRequests: 2, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set([]), exemptLocalAddress: false });
+    const qos = new ConnectQOS({ minHostRequests: 0, minIpRequests: 2, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set([]), exemptLocalAddress: false });
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
     expect(qos.shouldThrottleRequest({
@@ -415,7 +425,7 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('if IP monitoring disabled should still be able to throttle hosts', () => {
-    const qos = new ConnectQOS({ minHostRequests: 2, minIpRequests: 0, hostWhitelist: new Set(['goodHost']), ipWhitelist: new Set([]), exemptLocalAddress: false });
+    const qos = new ConnectQOS({ minHostRequests: 2, minIpRequests: 0, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set([]), exemptLocalAddress: false });
     toobusy.mockReturnValue(true);
     toobusy.lag.mockReturnValue(70);
     expect(qos.shouldThrottleRequest({
@@ -429,7 +439,7 @@ describe('shouldThrottleRequest', () => {
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: 'ignoredIp' }
-    } as IncomingMessage)).toEqual('badHost');
+    } as IncomingMessage)).toEqual(BadActorType.badHost);
     expect(qos.shouldThrottleRequest({
       headers: { host: 'b' },
       socket: { remoteAddress: 'ignoredIp' }

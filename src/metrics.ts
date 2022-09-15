@@ -1,6 +1,6 @@
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
-import { resolveHostFromRequest, resolveIpFromRequest } from './util';
+import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest } from './util';
 import LRU from 'lru-cache';
 
 export type MetricsOptions = {
@@ -168,6 +168,8 @@ export class Metrics {
   getHostInfo(source: string|IncomingMessage|Http2ServerRequest): ActorStatus|CacheItem|undefined {
     if (typeof source === 'object') {
       source = resolveHostFromRequest(source);
+    } else {
+      source = normalizeHost(source);
     }
 
     return getInfo(source, {
@@ -182,6 +184,8 @@ export class Metrics {
   trackHost(source: string|IncomingMessage|Http2ServerRequest, cache?: CacheItem): CacheItem|undefined {
     if (typeof source === 'object') {
       source = resolveHostFromRequest(source);
+    } else {
+      source = normalizeHost(source);
     }
 
     const result = track(source, {
