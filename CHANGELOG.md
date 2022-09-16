@@ -1,3 +1,7 @@
+## 4.1.1
+
+- **Debug** Expose `id` property on cache items and export utils
+
 ## 4.1.0
 
 - **Feature** Normalize hosts to drop ports and `www` subdomain
