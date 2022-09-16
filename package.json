@@ -1,6 +1,6 @@
 {
   "name": "connect-qos",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "description": "Connect middleware that helps maintain a high quality of service during heavy traffic",
   "main": "lib",
   "types": "src",
