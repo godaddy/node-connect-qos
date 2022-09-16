@@ -58,8 +58,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { 'host': 'a' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('a')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
-    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.hosts.get('a')).toEqual({ id: 'a', history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('unknown')).toEqual({ id: 'unknown', history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('http2.headers.:authority is valid', () => {
@@ -67,8 +67,8 @@ describe('trackRequest', () => {
     metrics.trackRequest({
       headers: { ':authority': 'b' }
     } as Http2ServerRequest);
-    expect(metrics.hosts.get('b')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
-    expect(metrics.ips.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.hosts.get('b')).toEqual({ id: 'b', history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('unknown')).toEqual({ id: 'unknown', history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('http.headers.x-forwarded-for is valid', () => {
@@ -78,8 +78,8 @@ describe('trackRequest', () => {
       headers: { },
       socket: { remoteAddress: 'c' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
-    expect(metrics.ips.get('c')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.hosts.get('unknown')).toEqual({ id: 'unknown', history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('c')).toEqual({ id: 'c', history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 
   it('socket.remoteAddress is valid', () => {
@@ -89,8 +89,8 @@ describe('trackRequest', () => {
       headers: {},
       socket: { remoteAddress: 'd' }
     } as IncomingMessage);
-    expect(metrics.hosts.get('unknown')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
-    expect(metrics.ips.get('d')).toEqual({ history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.hosts.get('unknown')).toEqual({ id: 'unknown', history: [0], hits: 1, rate: 0, ratio: 0 });
+    expect(metrics.ips.get('d')).toEqual({ id: 'd', history: [0], hits: 1, rate: 0, ratio: 0 });
   });
 });
 

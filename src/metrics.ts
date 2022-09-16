@@ -28,6 +28,7 @@ export enum BadActorType {
 }
 
 export type CacheItem = {
+  id: string;
   history: Array<number>; // time
   hits: number;
   ratio: number;
@@ -303,7 +304,7 @@ function track(source: string, options: TrackOptions): TrackResult {
   }
 
   if (!cache) {
-    cache = { history: new Array(), hits: 0, ratio: 0, rate: 0 };
+    cache = { id: source, history: new Array(), hits: 0, ratio: 0, rate: 0 };
     lru.set(source, cache);
   }
   cache.hits++;
