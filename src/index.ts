@@ -1,4 +1,10 @@
 export {
+  normalizeHost,
+  resolveHostFromRequest,
+  resolveIpFromRequest,
+  isLocalAddress
+} from './util';
+export {
   Metrics,
   MetricsOptions,
   ActorStatus,
