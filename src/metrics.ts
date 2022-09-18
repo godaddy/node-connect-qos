@@ -1,24 +1,20 @@
-import { IncomingMessage } from 'http';
-import { Http2ServerRequest } from 'http2';
-import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest } from './util';
 import LRU from 'lru-cache';
 
 export type MetricsOptions = {
   historySize?: number;
   maxAge?: number;
-  minHostRequests?: number|boolean;
-  minIpRequests?: number|boolean;
+  minHostRate?: number;
   maxHostRate?: number;
+  minIpRate?: number;
   maxIpRate?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
-  behindProxy?: boolean;
 }
 
 export enum ActorStatus {
-  Good,
-  Bad,
-  Whitelisted
+  Good = 200,
+  Whitelisted = 300,
+  Bad = 400
 }
 
 export enum BadActorType {
@@ -30,18 +26,16 @@ export enum BadActorType {
 export type CacheItem = {
   id: string;
   history: Array<number>; // time
-  hits: number;
-  ratio: number;
   rate: number;
 }
 
-export const PURGE_DELAY: number = 1000 * 5; // 5s
-
-export const DEFAULT_HISTORY_SIZE: number = 300;
-export const DEFAULT_MAX_AGE: number = 1000 * 10; // 10s
-export const DEFAULT_MIN_HOST_REQUESTS: number = 30;
-export const DEFAULT_MIN_IP_REQUESTS: number = 100;
-export const DEFAULT_HOST_WHITELIST = ['localhost', 'localhost:8080'];
+export const DEFAULT_HISTORY_SIZE: number = 200; // 0.5% hit rate enough to reside in LRU
+export const DEFAULT_MAX_AGE: number = 1000 * 10; // 10s is generally more than sufficient history
+export const DEFAULT_MIN_HOST_RATE: number = 20;
+export const DEFAULT_MAX_HOST_RATE: number = 40;
+export const DEFAULT_MIN_IP_RATE: number = 0; // disabled
+export const DEFAULT_MAX_IP_RATE: number = 0; // disabled
+export const DEFAULT_HOST_WHITELIST = ['localhost'];
 export const DEFAULT_IP_WHITELIST = [];
 
 export class Metrics {
@@ -49,65 +43,46 @@ export class Metrics {
     const {
       historySize = DEFAULT_HISTORY_SIZE,
       maxAge = DEFAULT_MAX_AGE,
-      minHostRequests = DEFAULT_MIN_HOST_REQUESTS,
-      minIpRequests = DEFAULT_MIN_IP_REQUESTS,
-      maxHostRate = 0, // disabled by default
-      maxIpRate = 0, // disabled by default
+      minHostRate = DEFAULT_MIN_HOST_RATE,
+      maxHostRate = DEFAULT_MAX_HOST_RATE,
+      minIpRate = DEFAULT_MIN_IP_RATE,
+      maxIpRate = DEFAULT_MAX_IP_RATE,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
-      ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
-      behindProxy = false
+      ipWhitelist = new Set(DEFAULT_IP_WHITELIST)
     } = (opts || {} as MetricsOptions);
 
-    if (minHostRequests > historySize) throw new Error(`${minHostRequests} minHostRequests cannot exceed ${historySize} historySize`)
-    if (minIpRequests > historySize) throw new Error(`${minIpRequests} minIpRequests cannot exceed ${historySize} historySize`)
+    if (minHostRate > maxHostRate) throw new Error(`${minHostRate} minHostRate cannot exceed ${maxHostRate} maxHostRate`)
+    if (minIpRate > maxIpRate) throw new Error(`${minIpRate} minIpRate cannot exceed ${maxIpRate} maxIpRate`)
 
-    const defaultLRUOptions: LRU.Options<string, CacheItem> = {
+    const lruOptions: LRU.Options<string, CacheItem> = {
       max: historySize,
       //ttl: maxAge, // do NOT use ttl due to performance and we handle stale purges
       allowStale: false,
       updateAgeOnGet: true,
       updateAgeOnHas: false
     };
-    this.#hosts = new LRU({
-      ...defaultLRUOptions,
-      dispose: (value: CacheItem/*, key: string*/) => {
-        this.#hostRequests -= value.hits;
-      }
-    });
-    this.#ips = new LRU({
-      ...defaultLRUOptions,
-      dispose: (value: CacheItem/*, key: string*/) => {
-        this.#ipRequests -= value.hits;
-      }
-    });
-    this.#hostRequests = this.#ipRequests = 0;
-    this.#hostPurgeTime = this.#ipPurgeTime = Date.now();
+    this.#hosts = new LRU(lruOptions);
+    this.#ips = new LRU(lruOptions);
     this.#historySize = historySize;
     this.#maxAge = maxAge;
-    this.#minHostRequests = minHostRequests;
-    this.#minIpRequests = minIpRequests;
+    this.#minHostRate = minHostRate;
     this.#maxHostRate = maxHostRate;
+    this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
-    this.#behindProxy = behindProxy;
   }
 
   #hosts: LRU<string, CacheItem>;
   #ips: LRU<string, CacheItem>;
-  #hostRequests: number;
-  #ipRequests: number;
-  #hostPurgeTime: number;
-  #ipPurgeTime: number;
   #historySize: number;
   #maxAge: number;
-  #minHostRequests: number|boolean;
-  #minIpRequests: number|boolean;
+  #minHostRate: number;
   #maxHostRate: number;
+  #minIpRate: number;
   #maxIpRate: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
-  #behindProxy: boolean;
 
   get hosts(): LRU<string, CacheItem> {
     return this.#hosts;
@@ -117,16 +92,16 @@ export class Metrics {
     return this.#ips;
   }
 
-  get hostRequests(): number {
-    return this.#hostRequests;
-  }
-
-  get ipRequests(): number {
-    return this.#ipRequests;
+  get minHostRate(): number {
+    return this.#minHostRate;
   }
 
   get maxHostRate(): number {
     return this.#maxHostRate;
+  }
+
+  get minIpRate(): number {
+    return this.#minIpRate;
   }
 
   get maxIpRate(): number {
@@ -141,14 +116,6 @@ export class Metrics {
     return this.#maxAge;
   }
 
-  get minHostRequests(): number|boolean {
-    return this.#minHostRequests;
-  }
-
-  get minIpRequests(): number|boolean {
-    return this.#minIpRequests;
-  }
-
   get hostWhitelist(): Set<string> {
     return this.#hostWhitelist;
   }
@@ -157,100 +124,55 @@ export class Metrics {
     return this.#ipWhitelist;
   }
 
-  get behindProxy(): boolean {
-    return this.#behindProxy;
-  }
-
-  trackRequest(req: IncomingMessage|Http2ServerRequest): void {
-    this.trackHost(req);
-    this.trackIp(req);
-  }
-
-  getHostInfo(source: string|IncomingMessage|Http2ServerRequest): ActorStatus|CacheItem|undefined {
-    if (typeof source === 'object') {
-      source = resolveHostFromRequest(source);
-    } else {
-      source = normalizeHost(source);
-    }
-
+  getHostInfo(source: string): ActorStatus|CacheItem|undefined {
     return getInfo(source, {
       lru: this.#hosts,
-      requestCount: this.#hostRequests,
-      minRequests: this.#minHostRequests,
       whitelist: this.#hostWhitelist,
-      maxRate: this.#maxHostRate
+      minRate: this.#minHostRate,
+      maxAge: this.#maxAge
     });
   }
 
-  trackHost(source: string|IncomingMessage|Http2ServerRequest, cache?: CacheItem): CacheItem|undefined {
-    if (typeof source === 'object') {
-      source = resolveHostFromRequest(source);
-    } else {
-      source = normalizeHost(source);
-    }
-
-    const result = track(source, {
+  trackHost(source: string, cache?: CacheItem): CacheItem|undefined {
+    return track(source, {
       lru: this.#hosts,
       cache,
-      maxAge: this.#maxAge,
-      purgeTime: this.#hostPurgeTime
+      minRate: this.#minHostRate
     });
-    this.#hostRequests -= result.stale;
-    this.#hostPurgeTime = result.purgeTime;
-    this.#hostRequests++;
-
-    return result.cache;
   }
 
-  getIpInfo(source: string|IncomingMessage|Http2ServerRequest): ActorStatus|CacheItem|undefined {
-    if (typeof source === 'object') {
-      source = resolveIpFromRequest(source, this.behindProxy);
-    }
-
+  getIpInfo(source: string): ActorStatus|CacheItem|undefined {
     return getInfo(source, {
       lru: this.#ips,
-      requestCount: this.#ipRequests,
-      minRequests: this.#minIpRequests,
       whitelist: this.#ipWhitelist,
-      maxRate: this.#maxIpRate
+      minRate: this.#minIpRate,
+      maxAge: this.#maxAge
     });
   }
 
-  trackIp(source: string|IncomingMessage|Http2ServerRequest, cache?: CacheItem): CacheItem|undefined {
-    if (typeof source === 'object') {
-      source = resolveIpFromRequest(source, this.behindProxy);
-    }
-
-    const result = track(source, {
+  trackIp(source: string, cache?: CacheItem): CacheItem|undefined {
+    return track(source, {
       lru: this.#ips,
       cache,
-      maxAge: this.#maxAge,
-      purgeTime: this.#ipPurgeTime
+      minRate: this.#minIpRate
     });
-    this.#ipRequests -= result.stale;
-    this.#ipPurgeTime = result.purgeTime;
-    this.#ipRequests++;
-
-    return result.cache;
   }
 }
 
 export type GetInfoOptions = {
   lru: LRU<string, CacheItem>,
-  requestCount: number,
-  minRequests: number|boolean,
   whitelist: Set<string>,
-  maxRate: number
+  minRate: number,
+  maxAge: number
 }
 
 function getInfo(source: string, {
   lru,
-  requestCount,
-  minRequests,
   whitelist,
-  maxRate
+  minRate,
+  maxAge
 }: GetInfoOptions): ActorStatus|CacheItem|undefined {
-  if (!minRequests) return ActorStatus.Good; // if monitoring is disabled treat as Good
+  if (!minRate) return ActorStatus.Good; // if monitoring is disabled treat as Good
 
   // reserved to indicate will never be a bad actor
   if (whitelist.has(source)) return ActorStatus.Whitelisted;
@@ -260,12 +182,27 @@ function getInfo(source: string, {
   if (cache) { // always precompute `rate` & `ratio` based on NOW
     // update rate
     const now = Date.now();
-    const eldest = cache.history[0] ?? now;
-    const age = now - eldest;
-    cache.rate = (!age || cache.hits < maxRate) ? 0 : ((cache.hits / age) * 1000);
+    const expiredAt = now - maxAge;
 
-    // update ratio
-    cache.ratio = requestCount >= minRequests ? cache.hits / requestCount : 0;
+    // always remove stale history before calculating rate
+    let expiredCount;
+    // slightly faster than shifting
+    for (expiredCount = 0; expiredCount < cache.history.length; expiredCount++) {
+      if (cache.history[expiredCount] >= expiredAt) break;
+    }
+    if (expiredCount) {
+      cache.history = cache.history.slice(expiredCount);
+    }
+
+    if (cache.history.length < minRate) {
+      cache.rate = 0; // insufficient history to measure
+    } else {
+      const eldest = cache.history[0];
+      // default to 1ms to avoid divide by zero errors since we do have adequate history
+      const age = (now - eldest) || 1;
+  
+      cache.rate = ((cache.history.length / age) * 1000);
+    }
   }
 
   return cache;
@@ -274,78 +211,22 @@ function getInfo(source: string, {
 export type TrackOptions = {
   lru: LRU<string, CacheItem>,
   cache?: CacheItem,
-  maxAge: number,
-  purgeTime: number
+  minRate: number
 }
 
-export type TrackResult = {
-  cache?: CacheItem,
-  stale: number,
-  purgeTime: number
-}
+function track(source: string, options: TrackOptions): CacheItem|undefined {
+  const { lru, minRate } = options;
+  let { cache } = options;
 
-function track(source: string, options: TrackOptions): TrackResult {
-  const { lru, maxAge } = options;
-  let { cache, purgeTime } = options;
+  if (!minRate) return void 0; // tracking disabled
 
-  let stale = 0;
+  if (!cache) cache = lru.get(source); // if not supplied grab from lru
 
-  const now = Date.now();
-  if ((now - purgeTime) >= PURGE_DELAY) { // purge before adding
-    // NON-OBVIOUS BUG. We MUST track the return value
-    // and subtract AFTER, otherwise doing "this.#ipRequests -= purgeStale"
-    // will result in invalid tracking due to LRU dispose handler
-    stale = purgeStale(lru, maxAge);
-    purgeTime = now;
-  }
-
-  if (!cache) { // if cache not provided attempt to fetch
-    cache = lru.get(source);
-  }
-
-  if (!cache) {
-    cache = { id: source, history: new Array(), hits: 0, ratio: 0, rate: 0 };
+  if (!cache) { // if not in LRU create it
+    cache = { id: source, history: new Array(), rate: 0 };
     lru.set(source, cache);
   }
-  cache.hits++;
-  cache.history.push(now);
+  cache.history.push(Date.now()); // head=eldest, tail=newest
 
-  return { cache, stale, purgeTime };
-}
-
-// remove stale history and delete from LRU if history all stale,
-// and return the number of requests that were stale
-function purgeStale(cache: LRU<string, CacheItem>, maxAge: number): number {
-  let delta = 0;
-  const expiredAt = Date.now() - maxAge - 1;
-  const deleteFromCache = [];
-
-  for (let [key, value] of cache.entries()) {
-    let expiredCount = 0;
-    for (let time of value.history.values()) {
-      let expired = time <= expiredAt;
-      if (!expired) break;
-      expiredCount++;
-    }
-    if (expiredCount) {
-      if (expiredCount === value.history.length) {
-        // if everything is expired, delete from cache
-        deleteFromCache.push(key);
-      } else {
-        value.history = value.history.slice(expiredCount);
-        // only update hits/delta if we're not deleting!
-        // Otherwise the LRU dispose will update counts
-        // again and result in incorrect tracking
-        value.hits -= expiredCount;
-        delta += expiredCount;
-      }
-    }
-  }
-
-  // empty cache entries should be removed entirely
-  for (let key of deleteFromCache) {
-    cache.delete(key);
-  }
-
-  return delta;
+  return cache;
 }

@@ -1,3 +1,29 @@
+## 5.0.0
+
+This release is about simplifying options, improved performance, and
+predictable results (less "magic").
+
+- **Breaking** `maxHostRate` option work the similar as before,
+  but now require `minHostRate` to be set as well so that rate
+  limiting is based on the lag ratio between `minLag` and `maxLag`.
+  Additionally host rate limiting is enabled by default
+- **Breaking** `maxIpRate` option work the similar as before,
+  but now require `minIpRate` to be set as well so that rate
+  limiting is based on the lag ratio between `minLag` and `maxLag`.
+  IP rate limiting remains disabled by default
+- **Breaking** `behindProxy` has been replaced with `httpBehindProxy`
+  and `httpsBehindProxy` to account for possible differences between
+  bindings
+- **Breaking** `exemptLocalAddress` has been removed in favor
+  of existing whitelisting. This "feature" was highly flawed and
+  could potentially flag any internal NAT addresses as exempt when
+  the intention is really only to exempt the immediate host
+- **Breaking** All `Threshold` options have been removed blocking
+  has shifted entirely to rate limiting via `minHostRate` and
+  `minIpRate`. Additionally minimum request options have been
+  removed, but rate limiting now must meet `minHostRate` or
+  `minIpRate`
+
 ## 4.1.1
 
 - **Debug** Expose `id` property on cache items and export utils
