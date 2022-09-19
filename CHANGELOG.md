@@ -1,3 +1,10 @@
+## 5.1.0
+
+- **Breaking** Options remain identical but rate limiting is now
+  based on `maxAge` as the window of time, so if you have a rate
+  limit of `10` RPS using the default `maxAge` of 10s 100 requests
+  will come in before anything is blocked
+
 ## 5.0.0
 
 This release is about simplifying options, improved performance, and
