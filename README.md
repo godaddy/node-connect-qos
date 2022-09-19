@@ -2,9 +2,10 @@
 
 [![NPM](https://nodei.co/npm/connect-qos.png?mini=true)](https://nodei.co/npm/connect-qos/) [![Build Status](https://app.travis-ci.com/godaddy/connect-qos.svg?branch=main)](https://app.travis-ci.com/godaddy/connect-qos)
 
-Connect middleware that **helps** maintain a high quality of service during heavy traffic. The basic
-idea is to identify bad actors and not penalize legitimate traffic more than necessary until
-proper mitigation can be activated.
+Connect middleware that **helps** maintain a high quality of service
+during heavy traffic. The basic idea is to identify bad actors and
+not penalize legitimate traffic more than necessary until proper
+mitigation can be activated.
 
 
 ## Warning
@@ -78,37 +79,24 @@ For you tweakers out there, here's some levers to pull:
   Default should typically suffice unless you support cpu-intensive operations.
 * **maxLag** (default: `300`) - The highest lag threshold which will block the
   greatest amount of traffic determined by `maxBadHostThreshold` or `maxBadIpThreshold`.
-* **minBadHostThreshold** (default: `0.50`) - At `minLag` the fewest number of hosts
-  will be blocked. If a host equates to 50%+ of the traffic,
-	then that 50%+ will be blocked even at `minLag`.
-* **maxBadHostThreshold** (default: `0.01`) - At `maxLag` hosts will be blocked
-  if they meet or exceed 1% (by default) of all traffic.
-* **minBadIpThreshold** (default: `0.50`) - At `minLag` the fewest number of IPs
-  will be blocked. If a IP equates to 50% of the traffic,
-	then that 50% will be blocked even at `minLag`.
-* **maxBadIpThreshold** (default: `0.01`) - At `maxLag` IPs will be blocked
-  if they meet or exceed 1% (by default) of all traffic.
-* **minHostRequests** (default: `30`) - Minimum amount of host requests before
-  sufficient history to allow blocking biggest hitters if under load (>= `minLag`).
-	You can disable host monitoring by setting this to `false`.
-* **minIpRequests** (default: `100`) - Minimum amount of IP requests before
-  sufficient history to allow blocking biggest hitters if under load (>= `minLag`).
-	You can disable IP monitoring by setting this to `false`.
-* **maxHostRate** (default: `0`) - If non-zero and no lag bad actors will be
-  flagged by rate limiting instead.
-* **maxIpRate** (default: `0`) - If non-zero and no lag bad actors will be
-  flagged by rate limiting instead.
+* **minHostRate** (default: `20`) - Minimum rate if lag is >= maxLag. Disable
+  rate limiting by setting to `0`.
+* **maxHostRate** (default: `40`) - Maximum rate if lag is <= minLag.
+* **minIpRate** (default: `0`) - Minimum rate if lag is >= maxLag. Disable
+  rate limiting by setting to `0`.
+* **maxIpRate** (default: `0`) - Maximum rate if lag is <= minLag.
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
-* **exemptLocalAddress** (default: `true`) - By default local requests are exempt
-  from QOS. This is beneficial for local testing, but critical for services that
-	rely on healthchecks.
-* **historySize** (default: `300`) - The LRU history size to use in
+* **historySize** (default: `200`) - The LRU history size to use in
   tracking bad actors. Hosts and IPs both get their own dedicated LRU.
 * **maxAge** (default: `10000`) - Time (in ms) before history is purged.
-* **hostWhitelist** `Set<string>(['localhost', 'localhost:8080'])` - If provided will never flag hosts as bad actors.
+  10 seconds is generally more than adequate to capture an accurate hit rate.
+* **hostWhitelist** `Set<string>(['localhost'])` - If provided will never
+  flag hosts as bad actors.
 * **ipWhitelist** `Set<string>([])` - If provided will never flag IPs as bad actors.
-* **behindProxy** (default: `false`) - `x-forwarded-for` header only supported
+* **httpBehindProxy** (default: `false`) - `x-forwarded-for` header only supported
+  if this option is set to `true`.
+* **httpsBehindProxy** (default: `false`) - `x-forwarded-for` header only supported
   if this option is set to `true`.
 
 

@@ -38,6 +38,9 @@ node_modules/
 *.sublime-project
 *.sublime-workspace
 
+# CPU profiles
+cpu-profiles/
+
 # New Relic
 newrelic_app.log
 

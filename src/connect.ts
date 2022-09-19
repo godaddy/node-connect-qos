@@ -2,7 +2,7 @@ import toobusy from 'toobusy-js';
 import { Metrics, MetricsOptions, ActorStatus, BadActorType, CacheItem } from './metrics';
 import { IncomingMessage } from 'http';
 import { Http2ServerRequest } from 'http2';
-import { isLocalAddress } from './util';
+import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest } from './util';
 
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
 export type BeforeThrottleFn = (qos: ConnectQOS, req: IncomingMessage|Http2ServerRequest, reason: string) => boolean|undefined;
@@ -14,13 +14,9 @@ export type GetMiddlewareOptions = {
 export interface ConnectQOSOptions extends MetricsOptions {
   minLag?: number;
   maxLag?: number;
-  userLag?: number;
-  minBadHostThreshold?: number;
-  maxBadHostThreshold?: number;
-  minBadIpThreshold?: number;
-  maxBadIpThreshold?: number;
   errorStatusCode?: number;
-  exemptLocalAddress?: boolean;
+  httpBehindProxy?: boolean;
+  httpsBehindProxy?: boolean;
 }
 
 export class ConnectQOS {
@@ -28,47 +24,36 @@ export class ConnectQOS {
     const {
       minLag = 70,
       maxLag = 300,
-      userLag = 500,
-      minBadHostThreshold = 0.50, // requires 50% of traffic @ minLag
-      maxBadHostThreshold = 0.01, // requires 1% of traffic @ maxLag
-      minBadIpThreshold = 0.50, // requires 50% of traffic @ minLag
-      maxBadIpThreshold = 0.01, // requires 1% of traffic @ maxLag
       errorStatusCode = 503,
-      exemptLocalAddress = true,
+      httpBehindProxy = false, // must be explicit to enable
+      httpsBehindProxy = false, // must be explicit to enable
       ...metricOptions
     } = (opts || {} as ConnectQOSOptions);
 
     this.#minLag = minLag;
     this.#maxLag = maxLag;
     this.#lagRange = maxLag - minLag;
-    this.#userLag = userLag;
-    this.#minBadHostThreshold = minBadHostThreshold;
-    this.#maxBadHostThreshold = maxBadHostThreshold;
-    this.#badHostRange = minBadHostThreshold - maxBadHostThreshold; // naming is a little confusing unless you read docs
-    this.#minBadIpThreshold = minBadIpThreshold;
-    this.#maxBadIpThreshold = maxBadIpThreshold;
-    this.#badIpRange = minBadIpThreshold - maxBadIpThreshold; // naming is a little confusing unless you read docs
     this.#errorStatusCode = errorStatusCode;
-    this.#exemptLocalAddress = exemptLocalAddress;
+    this.#httpBehindProxy = httpBehindProxy;
+    this.#httpsBehindProxy = httpsBehindProxy;
   
-    toobusy.maxLag(this.#minLag);
+    // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
+    // toobusy.maxLag(this.#maxLag);
   
     this.#metrics = new Metrics(metricOptions);
+    this.#hostRateRange = this.#metrics.maxHostRate - this.#metrics.minHostRate;
+    this.#ipRateRange = this.#metrics.maxIpRate - this.#metrics.minIpRate;
   }
 
   #minLag: number;
   #maxLag: number;
   #lagRange: number;
-  #userLag: number;
-  #minBadHostThreshold: number;
-  #maxBadHostThreshold: number;
-  #badHostRange: number;
-  #minBadIpThreshold: number;
-  #maxBadIpThreshold: number;
-  #badIpRange: number;
+  #hostRateRange: number;
+  #ipRateRange: number;
   #errorStatusCode: number;
+  #httpBehindProxy: boolean;
+  #httpsBehindProxy: boolean;
   #metrics: Metrics;
-  #exemptLocalAddress: boolean;
 
   get minLag(): number {
     return this.#minLag;
@@ -78,32 +63,16 @@ export class ConnectQOS {
     return this.#maxLag;
   }
 
-  get userLag(): number {
-    return this.#userLag;
-  }
-
-  get minBadHostThreshold(): number {
-    return this.#minBadHostThreshold;
-  }
-
-  get maxBadHostThreshold(): number {
-    return this.#maxBadHostThreshold;
-  }
-
-  get minBadIpThreshold(): number {
-    return this.#minBadIpThreshold;
-  }
-
-  get maxBadIpThreshold(): number {
-    return this.#maxBadIpThreshold;
-  }
-
   get errorStatusCode(): number {
     return this.#errorStatusCode;
   }
 
-  get exemptLocalAddress(): boolean {
-    return this.#exemptLocalAddress;
+  get httpBehindProxy(): boolean {
+    return this.#httpBehindProxy;
+  }
+
+  get httpsBehindProxy(): boolean {
+    return this.#httpsBehindProxy;
   }
 
   get metrics(): Metrics {
@@ -117,7 +86,7 @@ export class ConnectQOS {
       if (reason) {
         if (!beforeThrottle || beforeThrottle(self, req, reason as string) !== false) {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
-          res.writeHead(self.#errorStatusCode);
+          res.statusCode = self.#errorStatusCode;
           res.end();
           if (destroySocket && res.socket?.destroyed === false) { // explicit destroyed check
             res.socket.destroy(); // if bad actor throw away connection!
@@ -132,28 +101,20 @@ export class ConnectQOS {
   }
 
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
-    // do not track much less block local addresses
-    if (this.#exemptLocalAddress && isLocalAddress(req?.socket?.remoteAddress || '')) return false;
+    const hostStatus = this.getHostStatus(req, false); // defer tracking
+    const ipStatus = this.getIpStatus(req, false); // defer tracking
 
-    const hostStatus = this.getHostStatus(req, false);
-    const ipStatus = this.getIpStatus(req, false);
-
-    // never throttle whitelisted actor
+    // never throttle whitelisted actors
     if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
 
     if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
     else if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
-    else if (this.lag >= this.#userLag) return BadActorType.userLag;
 
     // only track if NOT throttling
-    this.#metrics.trackRequest(req);
+    this.trackRequest(req);
 
     // do not throttle user
     return false;  
-  }
-
-  get tooBusy(): boolean {
-    return toobusy();
   }
 
   get lag(): number {
@@ -162,24 +123,32 @@ export class ConnectQOS {
 
   get lagRatio(): number {
     // lagRatio = 0-1
-    return this.lag > this.#minLag ? Math.min(1, (this.lag - this.#minLag) / this.#lagRange) : 0;
+    const lag = toobusy.lag();
+    // if lag exceeds maxLag will cap ratio at 1
+    return lag > this.#minLag ? Math.min(1, (lag - this.#minLag) / this.#lagRange) : 0;
   }
 
+  resolveHost(source: string|IncomingMessage|Http2ServerRequest): string {
+    return typeof source === 'string' ? normalizeHost(source)
+      : resolveHostFromRequest(source)
+    ;
+  }
+  
   getHostStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
-    const sourceInfo = this.#metrics.getHostInfo(source);
+    const sourceStr: string = this.resolveHost(source);
+    const sourceInfo = this.#metrics.getHostInfo(sourceStr);
 
     const status = getStatus(sourceInfo, {
-      tooBusy: this.tooBusy,
-      maxRate: this.#metrics.maxHostRate,
-      lagRatio: this.lagRatio,
-      badRange: this.#badHostRange,
-      minBadThreshold: this.#maxBadHostThreshold // naming is a little confusing unless you read docs
+      minRate: this.#metrics.minHostRate,
+      rateRange: this.#hostRateRange,
+      lagRatio: this.lagRatio
     });
     if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
     
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
-      this.#metrics.trackHost(source, sourceInfo as CacheItem);
+      // forward cache to avoid additional lookup
+      this.#metrics.trackHost(sourceStr, sourceInfo as CacheItem);
     }
 
     return status;
@@ -189,20 +158,26 @@ export class ConnectQOS {
     return this.getHostStatus(host, track) === ActorStatus.Bad;
   }
 
+  resolveIp(source: string|IncomingMessage|Http2ServerRequest): string {
+    return typeof source === 'string' ? source
+      : resolveIpFromRequest(source, (source as Http2ServerRequest).scheme === 'https' ? this.#httpsBehindProxy : this.#httpBehindProxy)
+    ;
+  }
+
   getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
-    const sourceInfo = this.#metrics.getIpInfo(source);
+    const sourceStr: string = this.resolveIp(source);
+    const sourceInfo = this.#metrics.getIpInfo(sourceStr);
 
     const status = getStatus(sourceInfo, {
-      tooBusy: this.tooBusy,
-      maxRate: this.#metrics.maxIpRate,
-      lagRatio: this.lagRatio,
-      badRange: this.#badIpRange,
-      minBadThreshold: this.#maxBadIpThreshold // naming is a little confusing unless you read docs
+      minRate: this.#metrics.minIpRate,
+      rateRange: this.#ipRateRange,
+      lagRatio: this.lagRatio
     });
     
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
-      this.#metrics.trackIp(source, sourceInfo as CacheItem);
+      // forward cache to avoid additional lookup
+      this.#metrics.trackIp(sourceStr, sourceInfo as CacheItem);
     }
 
     return status;
@@ -211,40 +186,43 @@ export class ConnectQOS {
   isBadIp(ip: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
     return this.getIpStatus(ip, track) === ActorStatus.Bad;
   }
+
+  trackRequest(req: IncomingMessage|Http2ServerRequest): void {
+    const host = this.resolveHost(req);
+    this.#metrics.trackHost(host);
+    const ip = this.resolveIp(req);
+    this.#metrics.trackIp(ip);
+  }
 }
 
 export type GetStatusOptions = {
-  tooBusy: boolean,
-  maxRate: number,
-  lagRatio: number,
-  badRange: number,
-  minBadThreshold: number
+  minRate: number,
+  rateRange: number,
+  lagRatio: number
 }
 
 function getStatus(sourceInfo: ActorStatus|CacheItem|undefined, {
-  tooBusy,
-  maxRate,
-  lagRatio,
-  badRange,
-  minBadThreshold
+  minRate,
+  rateRange,
+  lagRatio
 }: GetStatusOptions): ActorStatus {
   if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
 
-  let status: ActorStatus;
+  // if no history OR rate limiting disabled assume it's good
+  if (!sourceInfo || !minRate) return ActorStatus.Good;
 
-  if (!sourceInfo) status = ActorStatus.Good; // if no history assume it's good
-  else if (!tooBusy) { // if NOT busy we rely on rate limiting, if enabled
-    if (!maxRate) {
-      status = ActorStatus.Good; // rate limiting disabled
-    } else { // check by rate limit
-      status = sourceInfo.rate > maxRate ? ActorStatus.Bad : ActorStatus.Good;
-    }
-  } else { // otherwise we block by ratios
-    const requiredThreshold = Math.max(minBadThreshold, (1-lagRatio) * badRange);
+  // lagRatio = 0-1 (min-max)
+  // minRate = 10
+  // maxRate = 30
+  // rateRange = (maxRate - minRate) = 20
+  // ((1-0.00) * 20) + 10 = 30 // minLag RPS
+  // ((1-0.25) * 20) + 10 = 25
+  // ((1-0.50) * 20) + 10 = 20
+  // ((1-0.75) * 20) + 10 = 15
+  // ((1-1.00) * 20) + 10 = 10 // maxLag RPS
+  const dynamicRate = ((1-lagRatio) * rateRange) + minRate;
+  // min/max not required since lagRatio is guaranteed
+  // to be 0-1 regardless of (under|over)flow
 
-    // if source meets or exceeds required threshold then it should be blocked
-    status = sourceInfo.ratio >= requiredThreshold ? ActorStatus.Bad : ActorStatus.Good;
-  }
-
-  return status;
+  return sourceInfo.rate > dynamicRate ? ActorStatus.Bad : ActorStatus.Good;
 }
