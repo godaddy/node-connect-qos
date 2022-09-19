@@ -159,7 +159,7 @@ describe('getMiddleware', () => {
 
   it('beforeThrottle invoked if badHost', () => {
     const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1 });
     const middleware = qos.getMiddleware({ beforeThrottle });
     expect(typeof middleware).toEqual('function');
     qos.isBadHost('unknown', true);
@@ -174,7 +174,7 @@ describe('getMiddleware', () => {
 
   it('beforeThrottle invoked if badHost bad not blocked if returns false', () => {
     const beforeThrottle = jest.fn().mockReturnValue(false) as BeforeThrottleFn;
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1 });
     const middleware = qos.getMiddleware({ beforeThrottle });
     expect(typeof middleware).toEqual('function');
     qos.isBadHost('unknown', true);
@@ -195,7 +195,7 @@ describe('isBadHost', () => {
   });
 
   it('returns true if bad hosts', () => {
-    const qos = new ConnectQOS({ minHostRate: 2, maxHostRate: 2 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 2, maxHostRate: 2 });
     expect(qos.isBadHost('unknown', false)).toEqual(false); // insufficient history
     qos.isBadHost('unknown', true);
     expect(qos.isBadHost('unknown', false)).toEqual(false); // insufficient history
@@ -204,7 +204,7 @@ describe('isBadHost', () => {
   });
 
   it('returns true if throttling bad hosts', () => {
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1 });
     expect(qos.isBadHost('a')).toEqual(false);
     expect(qos.metrics.getHostInfo('a')?.history.length).toEqual(1);
     expect(qos.isBadHost('a')).toEqual(true);
@@ -212,7 +212,7 @@ describe('isBadHost', () => {
   });
 
   it('normalizes host correctly and identifies bad host', () => {
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1 });
     expect(qos.isBadHost('a.com:443')).toEqual(false);
     expect(qos.isBadHost('a.com')).toEqual(true);
     expect(qos.isBadHost('www.a.com:443')).toEqual(true);
@@ -226,7 +226,7 @@ describe('isBadIp', () => {
   });
 
   it('returns true if bad IPs', () => {
-    const qos = new ConnectQOS({ minIpRate: 2, maxIpRate: 2 });
+    const qos = new ConnectQOS({ maxAge: 1000, minIpRate: 2, maxIpRate: 2 });
     expect(qos.isBadIp('unknown', false)).toEqual(false); // insufficient history
     qos.isBadIp('unknown', true);
     expect(qos.isBadIp('unknown', false)).toEqual(false); // insufficient history
@@ -235,7 +235,7 @@ describe('isBadIp', () => {
   });
 
   it('returns true if throttling bad IPs', () => {
-    const qos = new ConnectQOS({ minIpRate: 1, maxIpRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minIpRate: 1, maxIpRate: 1 });
     expect(qos.isBadIp('a')).toEqual(false);
     expect(qos.metrics.getIpInfo('a')?.history.length).toEqual(1);
     expect(qos.isBadIp('a')).toEqual(true);
@@ -245,7 +245,7 @@ describe('isBadIp', () => {
 
 describe('shouldThrottleRequest', () => {
   it('if host or IP is whitelisted do not throttle', () => {
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1, minIpRate: 1, maxIpRate: 1, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set(['goodIp']) });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1, minIpRate: 1, maxIpRate: 1, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set(['goodIp']) });
     expect(qos.shouldThrottleRequest({
       headers: { host: 'goodhost.com' }
     } as IncomingMessage)).toEqual(false);
@@ -265,7 +265,7 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('if host monitoring disabled should still be able to throttle IPs', () => {
-    const qos = new ConnectQOS({ minIpRate: 1, maxIpRate: 1, minHostRate: 0 });
+    const qos = new ConnectQOS({ maxAge: 1000, minIpRate: 1, maxIpRate: 1, minHostRate: 0 });
     expect(qos.shouldThrottleRequest({
       headers: { host: 'ignored' },
       socket: { remoteAddress: 'a' }
@@ -281,7 +281,7 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('if IP monitoring disabled should still be able to throttle hosts', () => {
-    const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1, minIpRate: 0 });
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1, minIpRate: 0 });
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: 'ignoredIp' }

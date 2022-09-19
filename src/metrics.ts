@@ -67,8 +67,10 @@ export class Metrics {
     this.#maxAge = maxAge;
     this.#minHostRate = minHostRate;
     this.#maxHostRate = maxHostRate;
+    this.#minHostRequests = Math.round(minHostRate * (maxAge/1000));
     this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
+    this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
   }
@@ -79,8 +81,10 @@ export class Metrics {
   #maxAge: number;
   #minHostRate: number;
   #maxHostRate: number;
+  #minHostRequests: number;
   #minIpRate: number;
   #maxIpRate: number;
+  #minIpRequests: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
 
@@ -128,7 +132,7 @@ export class Metrics {
     return getInfo(source, {
       lru: this.#hosts,
       whitelist: this.#hostWhitelist,
-      minRate: this.#minHostRate,
+      minRequests: this.#minHostRequests,
       maxAge: this.#maxAge
     });
   }
@@ -145,7 +149,7 @@ export class Metrics {
     return getInfo(source, {
       lru: this.#ips,
       whitelist: this.#ipWhitelist,
-      minRate: this.#minIpRate,
+      minRequests: this.#minIpRequests,
       maxAge: this.#maxAge
     });
   }
@@ -162,17 +166,17 @@ export class Metrics {
 export type GetInfoOptions = {
   lru: LRU<string, CacheItem>,
   whitelist: Set<string>,
-  minRate: number,
+  minRequests: number,
   maxAge: number
 }
 
 function getInfo(source: string, {
   lru,
   whitelist,
-  minRate,
+  minRequests,
   maxAge
 }: GetInfoOptions): ActorStatus|CacheItem|undefined {
-  if (!minRate) return ActorStatus.Good; // if monitoring is disabled treat as Good
+  if (!minRequests) return ActorStatus.Good; // if monitoring is disabled treat as Good
 
   // reserved to indicate will never be a bad actor
   if (whitelist.has(source)) return ActorStatus.Whitelisted;
@@ -194,7 +198,7 @@ function getInfo(source: string, {
       cache.history = cache.history.slice(expiredCount);
     }
 
-    if (cache.history.length < minRate) {
+    if (cache.history.length < minRequests) {
       cache.rate = 0; // insufficient history to measure
     } else {
       const eldest = cache.history[0];
