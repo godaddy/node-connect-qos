@@ -4,7 +4,8 @@ import { Http2ServerRequest } from 'http2';
 const HOST_NORMALIZE_REGEX = /(^www\.)?([^:]+)(:\d+)?$/;
 
 export function normalizeHost(host: string): string {
-  return HOST_NORMALIZE_REGEX.exec(host.toLowerCase())[2];
+  const match = HOST_NORMALIZE_REGEX.exec(host.toLowerCase());
+  return match ? match[2] : host;
 }
 
 export function resolveHostFromRequest(req: IncomingMessage|Http2ServerRequest): string {
