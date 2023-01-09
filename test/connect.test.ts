@@ -295,6 +295,30 @@ describe('shouldThrottleRequest', () => {
       socket: { remoteAddress: 'ignoredIp' }
     } as IncomingMessage)).toEqual(false); // hasn't satisified maxHostRate
   });
+
+  it('handle bursts of requests over time', () => {
+    const qos = new ConnectQOS({
+      minIpRate: 3, // 30 requests per 10s window
+      maxIpRate: 6, // 60 requests per 10s window
+      minLag: 40,
+      maxLag: 300,
+      maxAge: 10 * 1000,
+      minHostRate: 10,
+      maxHostRate: 10
+    });
+    toobusy.lag.mockReturnValue(0); // no lag will use max rate limit
+    for (let i = 0; i < 60; i++) {
+      // should only ever flag `badIp` anyway due to threshold being under 10/sec
+      const shouldBeThrottled = i >= 59 ? 'badIp' : false;
+      global.Date.now.mockReturnValue((i/60) * 10_000);
+      const res = qos.shouldThrottleRequest({
+        headers: { host: 'ignored' },
+        socket: { remoteAddress: 'a' }
+      } as IncomingMessage);
+      res !== shouldBeThrottled && console.log(`i:${i}, res ${res} !== ${shouldBeThrottled}`);
+      expect(res).toEqual(shouldBeThrottled);
+    }
+  });
 });
 
 describe('resolveHost', () => {
