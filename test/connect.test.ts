@@ -315,7 +315,6 @@ describe('shouldThrottleRequest', () => {
         headers: { host: 'ignored' },
         socket: { remoteAddress: 'a' }
       } as IncomingMessage);
-      res !== shouldBeThrottled && console.log(`i:${i}, res ${res} !== ${shouldBeThrottled}`);
       expect(res).toEqual(shouldBeThrottled);
     }
   });

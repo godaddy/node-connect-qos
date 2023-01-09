@@ -102,6 +102,21 @@ describe('getHostInfo', () => {
     expect(typeof metrics.getHostInfo('b')).toEqual('object');
   });
 
+  it('rate measured over time', () => {
+    const maxAge = 1000;
+    const minHostRate = 2;
+    const metrics = new Metrics({ maxAge, minHostRate, maxHostRate: minHostRate });
+    expect(metrics.getHostInfo('a')).toEqual(undefined);
+    metrics.trackHost('a');
+    expect(metrics.getHostInfo('a')?.rate).toEqual(0); // does not min
+    for (let i = 1; i <= 10; i++) {
+      const elapsed = i * 100;
+      global.Date.now.mockReturnValue(elapsed);
+      metrics.trackHost('a');
+      expect(metrics.getHostInfo('a')?.rate).toEqual(((i+1) / elapsed) * 1000);
+    }
+  });
+
   it('purge anything stale prior to getInfo', () => {
     const maxAge = 1000;
     const minHostRate = 10;
@@ -133,6 +148,21 @@ describe('getIpInfo', () => {
     expect(metrics.getIpInfo('a')).toEqual(ActorStatus.Whitelisted); // no history required
     metrics.trackIp('b');
     expect(typeof metrics.getIpInfo('b')).toEqual('object');
+  });
+
+  it('rate measured over time', () => {
+    const maxAge = 1000;
+    const minIpRate = 2;
+    const metrics = new Metrics({ maxAge, minIpRate, maxIpRate: minIpRate });
+    expect(metrics.getIpInfo('a')).toEqual(undefined);
+    metrics.trackIp('a');
+    expect(metrics.getIpInfo('a')?.rate).toEqual(0); // does not min
+    for (let i = 1; i <= 10; i++) {
+      const elapsed = i * 100;
+      global.Date.now.mockReturnValue(elapsed);
+      metrics.trackIp('a');
+      expect(metrics.getIpInfo('a')?.rate).toEqual(((i+1) / elapsed) * 1000);
+    }
   });
 
   it('purge anything stale prior to getInfo', () => {
