@@ -110,6 +110,60 @@ describe('getMiddleware', () => {
     expect(end).not.toHaveBeenCalled;
   });
 
+  it('beforeThrottle NOT invoked if bad host but Host whitelisted', () => {
+    const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
+    const hostWhitelist = new Set(['goodHost']);
+    const qos = new ConnectQOS({ hostWhitelist, minHostRate: 1, maxHostRate: 1, minIpRate: 1, maxIpRate: 1 });
+    const middleware = qos.getMiddleware({ beforeThrottle });
+    expect(typeof middleware).toEqual('function');
+    const writeHead = jest.fn();
+    const end = jest.fn();
+    const destroy = jest.fn();
+    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).not.toHaveBeenCalled;
+    expect(end).not.toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+    qos.isBadHost('goodHost', true);
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).toHaveBeenCalled;
+    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+  });
+
+  it('beforeThrottle NOT invoked if bad host but IP whitelisted', () => {
+    const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
+    const ipWhitelist = new Set(['goodIp']);
+    const qos = new ConnectQOS({ ipWhitelist, minHostRate: 1, maxHostRate: 1, minIpRate: 1, maxIpRate: 1 });
+    const middleware = qos.getMiddleware({ beforeThrottle });
+    expect(typeof middleware).toEqual('function');
+    const writeHead = jest.fn();
+    const end = jest.fn();
+    const destroy = jest.fn();
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).not.toHaveBeenCalled;
+    expect(end).not.toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+    qos.isBadHost('badHost', true);
+    middleware({ headers: { host: 'badHost' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(beforeThrottle).toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).toHaveBeenCalled;
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    expect(beforeThrottle).not.toHaveBeenCalled;
+    expect(writeHead).toHaveBeenCalled;
+    expect(end).toHaveBeenCalled;
+    expect(destroy).not.toHaveBeenCalled;
+  });
+
   it('beforeThrottle invoked if bad host', () => {
     const beforeThrottle = jest.fn().mockReturnValue(true) as BeforeThrottleFn;
     const qos = new ConnectQOS({ minHostRate: 1, maxHostRate: 1 });
@@ -262,6 +316,18 @@ describe('shouldThrottleRequest', () => {
       headers: { host: 'badhost.com' },
       socket: { remoteAddress: 'goodIp' }
     } as IncomingMessage)).toEqual(false); // won't block even if bad host since goodIp is whitelisted
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badhost.com' },
+      socket: { remoteAddress: 'goodIp' }
+    } as IncomingMessage)).toEqual(false); // won't block even if bad host since goodIp is whitelisted
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodhost.com' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(false); // won't block even if bad IP since goodhost.com is whitelisted
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodhost.com' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(false); // won't block even if bad IP since goodhost.com is whitelisted
   });
 
   it('if host monitoring disabled should still be able to throttle IPs', () => {
