@@ -20,6 +20,7 @@ export enum ActorStatus {
 
 export enum BadActorType {
   badHost = 'badHost',
+  hostViolation = 'hostViolation',
   badIp = 'badIp',
   userLag = 'userLag'
 }

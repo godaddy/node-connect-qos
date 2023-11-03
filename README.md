@@ -83,7 +83,7 @@ For you tweakers out there, here's some levers to pull:
   rate limiting by setting to `0`.
 * **maxHostRate** (default: `40`) - Maximum rate if lag is <= minLag.
 * **maxHostRatio** (default: `0`) - If a given host receives the specified threshold (`0.1` = 10%)
-  all **source IP's** hitting that host will be blocked. This prevents a single host
+  a `hostViolation` will be returned. This prevents a single host
 	from accounting for excessive traffic and is an effective method for combating
 	very large attacks.
 * **minIpRate** (default: `0`) - Minimum rate if lag is >= maxLag. Disable

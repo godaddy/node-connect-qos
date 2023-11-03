@@ -385,7 +385,7 @@ describe('shouldThrottleRequest', () => {
     }
   });
 
-  it('maxHostRatio flags host violations as badIp', () => {
+  it('maxHostRatio flags host violations as hostViolation', () => {
     const qos = new ConnectQOS({
       maxHostRatio: 0.5,
       minHostRate: 1,
@@ -397,7 +397,7 @@ describe('shouldThrottleRequest', () => {
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: 'ignoredIp' }
-    } as IncomingMessage)).toEqual(BadActorType.badIp);
+    } as IncomingMessage)).toEqual(BadActorType.hostViolation);
     expect(qos.shouldThrottleRequest({
       headers: { host: 'b' },
       socket: { remoteAddress: 'ignoredIp' }

@@ -112,7 +112,7 @@ export class ConnectQOS {
     else if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
 
     // when we track host ratios, we block at the SOURCE IP
-    if (this.metrics.hostRatioViolations.has(host)) return BadActorType.badIp;
+    if (this.metrics.hostRatioViolations.has(host)) return BadActorType.hostViolation;
 
     // only track if NOT throttling
     this.trackRequest(req);
