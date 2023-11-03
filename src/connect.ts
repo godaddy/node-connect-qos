@@ -101,7 +101,8 @@ export class ConnectQOS {
   }
 
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
-    const hostStatus = this.getHostStatus(req, false); // defer tracking
+    const host = this.resolveHost(req);
+    const hostStatus = this.getHostStatus(host, false); // defer tracking
     const ipStatus = this.getIpStatus(req, false); // defer tracking
 
     // never throttle whitelisted actors
@@ -109,6 +110,9 @@ export class ConnectQOS {
 
     if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
     else if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
+
+    // when we track host ratios, we block at the SOURCE IP
+    if (this.metrics.hostRatioViolations.has(host)) return BadActorType.badIp;
 
     // only track if NOT throttling
     this.trackRequest(req);

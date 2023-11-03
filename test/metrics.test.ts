@@ -180,3 +180,38 @@ describe('getIpInfo', () => {
     expect(metrics.getIpInfo('a')?.rate).toEqual(0); // insufficient history
   });
 });
+
+describe('maxHostRatio', () => {
+  it('by default is disabled', () => {
+    const metrics = new Metrics();
+    expect(metrics.maxHostRatio).toEqual(0);
+  });
+
+  it('can be set', () => {
+    const metrics = new Metrics({ maxHostRatio: 0.5 });
+    expect(metrics.maxHostRatio).toEqual(0.5);
+  });
+
+  it('if set to 10% but not enough history, no violations', () => {
+    const metrics = new Metrics({ maxHostRatio: 0.1 });
+    Array.from({ length: 10 }, () => metrics.trackHost('a'));
+    // despite all requests hitting host 'a', there's not enough history to determine if it's a bad actor
+    expect([...metrics.hostRatioViolations.values()]).toEqual([]);
+  });
+
+  it('if set to 10% but not enough history, no violations', () => {
+    const metrics = new Metrics({ maxHostRatio: 0.1 });
+    const requiredHits = Math.ceil(metrics.maxHostRatio * 100 * 10); // 10x host ratio required before reporting violations
+    Array.from({ length: requiredHits }, () => metrics.trackHost('a'));
+    // despite all requests hitting host 'a', there's not enough history to determine if it's a bad actor
+    expect([...metrics.hostRatioViolations.values()]).toEqual(['a']);
+  });
+
+  it('if set to 50%, only hosts 50% or greater will be reported for violations', () => {
+    const metrics = new Metrics({ maxHostRatio: 0.5 });
+    const requiredHits = Math.ceil(metrics.maxHostRatio * 100 * 10); // 10x host ratio required before reporting violations
+    Array.from({ length: Math.round(requiredHits * 0.4) }, () => metrics.trackHost('a')); // 40% to 'a'
+    Array.from({ length: Math.round(requiredHits * 0.6) }, () => metrics.trackHost('b')); // 60% to 'b'
+    expect([...metrics.hostRatioViolations.values()]).toEqual(['b']);
+  });
+});

@@ -5,6 +5,7 @@ export type MetricsOptions = {
   maxAge?: number;
   minHostRate?: number;
   maxHostRate?: number;
+  maxHostRatio?: number;
   minIpRate?: number;
   maxIpRate?: number;
   hostWhitelist?: Set<string>;
@@ -33,6 +34,7 @@ export const DEFAULT_HISTORY_SIZE: number = 200; // 0.5% hit rate enough to resi
 export const DEFAULT_MAX_AGE: number = 1000 * 10; // 10s is generally more than sufficient history
 export const DEFAULT_MIN_HOST_RATE: number = 20;
 export const DEFAULT_MAX_HOST_RATE: number = 40;
+export const DEFAULT_MAX_HOST_RATIO: number = 0; // disabled
 export const DEFAULT_MIN_IP_RATE: number = 0; // disabled
 export const DEFAULT_MAX_IP_RATE: number = 0; // disabled
 export const DEFAULT_HOST_WHITELIST = ['localhost'];
@@ -45,6 +47,7 @@ export class Metrics {
       maxAge = DEFAULT_MAX_AGE,
       minHostRate = DEFAULT_MIN_HOST_RATE,
       maxHostRate = DEFAULT_MAX_HOST_RATE,
+      maxHostRatio = DEFAULT_MAX_HOST_RATIO,
       minIpRate = DEFAULT_MIN_IP_RATE,
       maxIpRate = DEFAULT_MAX_IP_RATE,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
@@ -68,6 +71,8 @@ export class Metrics {
     this.#minHostRate = minHostRate;
     this.#maxHostRate = maxHostRate;
     this.#minHostRequests = Math.round(minHostRate * (maxAge/1000));
+    this.#maxHostRatio = Math.max(Math.min(maxHostRatio, 0.9), 0); // 90% is very high, but this cap is just to prevent invalid ratios
+    this.#hostRatioMaxCount = Math.ceil(maxHostRatio * 100 * 10); // 10x requests compared to host ratio (10% * 10 = 100)
     this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
     this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
@@ -82,6 +87,11 @@ export class Metrics {
   #minHostRate: number;
   #maxHostRate: number;
   #minHostRequests: number;
+  #maxHostRatio: number;
+  #hostRatioMaxCount: number;
+  #hostRatioCount: number = 0;
+  #hostRatioViolations = new Set<string>();
+  #hostRatioCounts = new Map<string, number>();
   #minIpRate: number;
   #maxIpRate: number;
   #minIpRequests: number;
@@ -102,6 +112,14 @@ export class Metrics {
 
   get maxHostRate(): number {
     return this.#maxHostRate;
+  }
+
+  get maxHostRatio(): number {
+    return this.#maxHostRatio;
+  }
+
+  get hostRatioViolations(): Set<string> {
+    return this.#hostRatioViolations;
   }
 
   get minIpRate(): number {
@@ -138,6 +156,24 @@ export class Metrics {
   }
 
   trackHost(source: string, cache?: CacheItem): CacheItem|undefined {
+    if (this.#maxHostRatio) {
+      // only track if ratio limits enabled
+      this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
+      this.#hostRatioCount++;
+
+      if (this.#hostRatioCount >= this.#hostRatioMaxCount) {
+        // check for violations once we have sufficient history
+        const maxCount = Math.round(this.#hostRatioCount * this.#maxHostRatio);
+        this.#hostRatioViolations = [...this.#hostRatioCounts.entries()]
+          .reduce((violations, [source, count]) => {
+            if (count > maxCount) violations.add(source);
+            return violations;
+          }, new Set<string>());
+        this.#hostRatioCounts.clear();
+        this.#hostRatioCount = 0;
+      }
+    }
+
     return track(source, {
       lru: this.#hosts,
       cache,

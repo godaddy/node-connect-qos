@@ -384,6 +384,25 @@ describe('shouldThrottleRequest', () => {
       expect(res).toEqual(shouldBeThrottled);
     }
   });
+
+  it('maxHostRatio flags host violations as badIp', () => {
+    const qos = new ConnectQOS({
+      maxHostRatio: 0.5,
+      minHostRate: 1,
+      maxHostRate: 1,
+      minIpRate: 1,
+      maxIpRate: 1
+    });
+    qos.metrics.hostRatioViolations.add('a');
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual(BadActorType.badIp);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'b' },
+      socket: { remoteAddress: 'ignoredIp' }
+    } as IncomingMessage)).toEqual(false);
+  });
 });
 
 describe('resolveHost', () => {
