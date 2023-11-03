@@ -73,7 +73,7 @@ export class Metrics {
     this.#maxHostRate = maxHostRate;
     this.#minHostRequests = Math.round(minHostRate * (maxAge/1000));
     this.#maxHostRatio = Math.max(Math.min(maxHostRatio, 0.9), 0); // 90% is very high, but this cap is just to prevent invalid ratios
-    this.#hostRatioMaxCount = Math.ceil(maxHostRatio * 100 * 10); // 10x requests compared to host ratio (10% * 10 = 100)
+    this.#hostRatioMaxCount = Math.ceil(this.#maxHostRatio * 100 * 10); // 10x requests compared to host ratio (10% * 10 = 100)
     this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
     this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
