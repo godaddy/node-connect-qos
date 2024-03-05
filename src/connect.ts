@@ -102,9 +102,8 @@ export class ConnectQOS {
 
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
     const host = this.resolveHost(req);
-    const hostViolation = this.metrics.hostRatioViolations.has(host);
     const hostStatus = this.getHostStatus(host, false); // defer tracking
-    const ipStatus = this.getIpStatus(req, false, hostViolation); // defer tracking
+    const ipStatus = this.getIpStatus(req, false); // defer tracking
 
     // never throttle whitelisted actors
     if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
@@ -113,8 +112,14 @@ export class ConnectQOS {
 
     if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
 
-    // when we track host ratios, we flag as hostViolation to permit caller to block by ip or host per their choice
-    if (hostViolation) return BadActorType.hostViolation;
+    // If host is exceeding host ratio and IP rate override is either not set or exceeded, return hostViolation status
+    const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
+    if (
+      this.metrics.hostRatioViolations.has(host) &&
+      (!maxIpRateHostViolation || this.getIpStatus(req, false, Math.max(0, maxIpRateHostViolation - this.#metrics.minIpRate)) === ActorStatus.Bad)
+    ) {
+      return BadActorType.hostViolation;
+    }
 
     // only track if NOT throttling
     this.trackRequest(req);
@@ -170,15 +175,9 @@ export class ConnectQOS {
     ;
   }
 
-  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, hostViolation: boolean = false): ActorStatus {
+  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, rateRange: number = this.#ipRateRange): ActorStatus {
     const sourceStr: string = this.resolveIp(source);
     const sourceInfo = this.#metrics.getIpInfo(sourceStr);
-    const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
-    let rateRange = this.#ipRateRange;
-
-    if (hostViolation && maxIpRateHostViolation) {
-      rateRange = Math.max(0, maxIpRateHostViolation - this.#metrics.minIpRate);
-    }
 
     const status = getStatus(sourceInfo, {
       minRate: this.#metrics.minIpRate,

@@ -404,25 +404,23 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(false);
   });
 
-  it('maxIpRateHostViolation flags host violations as badIp if IP rate is exceeded', () => {
+  it('maxIpRateHostViolation flags host violations as hostViolation only if IP rate is exceeded', () => {
     const qos = new ConnectQOS({
       maxIpRateHostViolation: 1,
-      minHostRate: 1,
-      maxHostRate: 1,
       maxHostRatio: 0.5,
       minIpRate: 1,
-      maxIpRate: 10,
+      maxIpRate: 10000,
       maxAge: 1000
     });
     qos.metrics.hostRatioViolations.add('a');
-    qos.getIpStatus({
-      headers: { host: 'a' },
-      socket: { remoteAddress: 'badIp' }
-    } as IncomingMessage, true);
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: 'badIp' }
-    } as IncomingMessage)).toEqual(BadActorType.badIp);
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(BadActorType.hostViolation);
   });
 });
 
