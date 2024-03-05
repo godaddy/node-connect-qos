@@ -90,9 +90,9 @@ For you tweakers out there, here's some levers to pull:
   rate limiting by setting to `0`.
 * **maxIpRate** (default: `0`) - Maximum rate if lag is <= minLag.
 * **maxIpRateHostViolation** (default: `0`) - Maximum rate if target host is currently exceeding the
-* configured `maxHostRatio`. This can be used to increase IP throttling if a particular host is being
-* targeted by a large number of IPs. Requests hitting this max rate will return `badIp` instead of
-* `hostViolation`.
+  configured `maxHostRatio`. This can be used to increase IP throttling if a particular host is being
+  targeted by a large number of IPs. Requests hitting this max rate will receive `hostViolation` while
+	requests below the rate threshold but hitting the target host will not be flagged.
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
 * **historySize** (default: `200`) - The LRU history size to use in
