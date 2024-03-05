@@ -403,6 +403,27 @@ describe('shouldThrottleRequest', () => {
       socket: { remoteAddress: 'ignoredIp' }
     } as IncomingMessage)).toEqual(false);
   });
+
+  it('maxIpRateHostViolation flags host violations as badIp if IP rate is exceeded', () => {
+    const qos = new ConnectQOS({
+      maxIpRateHostViolation: 1,
+      minHostRate: 1,
+      maxHostRate: 1,
+      maxHostRatio: 0.5,
+      minIpRate: 1,
+      maxIpRate: 10,
+      maxAge: 1000
+    });
+    qos.metrics.hostRatioViolations.add('a');
+    qos.getIpStatus({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage, true);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(BadActorType.badIp);
+  });
 });
 
 describe('resolveHost', () => {
@@ -427,7 +448,7 @@ describe('resolveIp', () => {
   });
 
   it('returns x-forwarded-for if enabled via http', () => {
-    const qos = new ConnectQOS({ httpBehindProxy: true });    
+    const qos = new ConnectQOS({ httpBehindProxy: true });
     /* @ts-ignore */
     expect(qos.resolveIp({
       headers: { 'x-forwarded-for': 'a' },
@@ -436,7 +457,7 @@ describe('resolveIp', () => {
   });
 
   it('returns x-forwarded-for if enabled via https', () => {
-    const qos = new ConnectQOS({ httpsBehindProxy: true });    
+    const qos = new ConnectQOS({ httpsBehindProxy: true });
     /* @ts-ignore */
     expect(qos.resolveIp({
       scheme: 'https',
