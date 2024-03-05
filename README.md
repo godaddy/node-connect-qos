@@ -21,7 +21,7 @@ otherwise you may face an attack and not know about it.
 
 Using Connect or Express?
 
-	const 
+	const
 		connect = require("connect"),
 		http = require("http");
 	const { ConnectQOS } = require("connect-qos");
@@ -89,6 +89,10 @@ For you tweakers out there, here's some levers to pull:
 * **minIpRate** (default: `0`) - Minimum rate if lag is >= maxLag. Disable
   rate limiting by setting to `0`.
 * **maxIpRate** (default: `0`) - Maximum rate if lag is <= minLag.
+* **maxIpRateHostViolation** (default: `0`) - Maximum rate if target host is currently exceeding the
+* configured `maxHostRatio`. This can be used to increase IP throttling if a particular host is being
+* targeted by a large number of IPs. Requests hitting this max rate will return `badIp` instead of
+* `hostViolation`.
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
 * **historySize** (default: `200`) - The LRU history size to use in

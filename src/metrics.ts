@@ -8,6 +8,7 @@ export type MetricsOptions = {
   maxHostRatio?: number;
   minIpRate?: number;
   maxIpRate?: number;
+  maxIpRateHostViolation?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
 }
@@ -38,6 +39,7 @@ export const DEFAULT_MAX_HOST_RATE: number = 40;
 export const DEFAULT_MAX_HOST_RATIO: number = 0; // disabled
 export const DEFAULT_MIN_IP_RATE: number = 0; // disabled
 export const DEFAULT_MAX_IP_RATE: number = 0; // disabled
+export const DEFAULT_MAX_IP_RATE_BUSY_HOST: number = 0; // disabled
 export const DEFAULT_HOST_WHITELIST = ['localhost'];
 export const DEFAULT_IP_WHITELIST = [];
 
@@ -51,6 +53,7 @@ export class Metrics {
       maxHostRatio = DEFAULT_MAX_HOST_RATIO,
       minIpRate = DEFAULT_MIN_IP_RATE,
       maxIpRate = DEFAULT_MAX_IP_RATE,
+      maxIpRateHostViolation = DEFAULT_MAX_IP_RATE_BUSY_HOST,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
       ipWhitelist = new Set(DEFAULT_IP_WHITELIST)
     } = (opts || {} as MetricsOptions);
@@ -76,6 +79,7 @@ export class Metrics {
     this.#hostRatioMaxCount = Math.ceil(this.#maxHostRatio * 100 * 10); // 10x requests compared to host ratio (10% * 10 = 100)
     this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
+    this.#maxIpRateHostViolation = maxIpRateHostViolation;
     this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
@@ -95,6 +99,7 @@ export class Metrics {
   #hostRatioCounts = new Map<string, number>();
   #minIpRate: number;
   #maxIpRate: number;
+  #maxIpRateHostViolation: number;
   #minIpRequests: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
@@ -129,6 +134,10 @@ export class Metrics {
 
   get maxIpRate(): number {
     return this.#maxIpRate;
+  }
+
+  get maxIpRateHostViolation(): number {
+    return this.#maxIpRateHostViolation;
   }
 
   get historySize(): number {
@@ -241,7 +250,7 @@ function getInfo(source: string, {
       const eldest = cache.history[0];
       // default to 1ms to avoid divide by zero errors since we do have adequate history
       const age = (now - eldest) || 1;
-  
+
       cache.rate = ((cache.history.length / age) * 1000);
     }
   }

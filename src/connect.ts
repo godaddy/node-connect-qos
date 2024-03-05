@@ -36,10 +36,10 @@ export class ConnectQOS {
     this.#errorStatusCode = errorStatusCode;
     this.#httpBehindProxy = httpBehindProxy;
     this.#httpsBehindProxy = httpsBehindProxy;
-  
+
     // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
     // toobusy.maxLag(this.#maxLag);
-  
+
     this.#metrics = new Metrics(metricOptions);
     this.#hostRateRange = this.#metrics.maxHostRate - this.#metrics.minHostRate;
     this.#ipRateRange = this.#metrics.maxIpRate - this.#metrics.minIpRate;
@@ -94,31 +94,33 @@ export class ConnectQOS {
           return;
         }
       }
-  
+
       // continue
       next();
-    };  
+    };
   }
 
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
     const host = this.resolveHost(req);
+    const hostViolation = this.metrics.hostRatioViolations.has(host);
     const hostStatus = this.getHostStatus(host, false); // defer tracking
-    const ipStatus = this.getIpStatus(req, false); // defer tracking
+    const ipStatus = this.getIpStatus(req, false, hostViolation); // defer tracking
 
     // never throttle whitelisted actors
     if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
 
     if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
-    else if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
+
+    if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
 
     // when we track host ratios, we flag as hostViolation to permit caller to block by ip or host per their choice
-    if (this.metrics.hostRatioViolations.has(host)) return BadActorType.hostViolation;
+    if (hostViolation) return BadActorType.hostViolation;
 
     // only track if NOT throttling
     this.trackRequest(req);
 
     // do not throttle user
-    return false;  
+    return false;
   }
 
   get lag(): number {
@@ -137,7 +139,7 @@ export class ConnectQOS {
       : resolveHostFromRequest(source)
     ;
   }
-  
+
   getHostStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
     const sourceStr: string = this.resolveHost(source);
     const sourceInfo = this.#metrics.getHostInfo(sourceStr);
@@ -148,7 +150,7 @@ export class ConnectQOS {
       lagRatio: this.lagRatio
     });
     if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
-    
+
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
       // forward cache to avoid additional lookup
@@ -168,16 +170,22 @@ export class ConnectQOS {
     ;
   }
 
-  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true): ActorStatus {
+  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, hostViolation: boolean = false): ActorStatus {
     const sourceStr: string = this.resolveIp(source);
     const sourceInfo = this.#metrics.getIpInfo(sourceStr);
+    const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
+    let rateRange = this.#ipRateRange;
+
+    if (hostViolation && maxIpRateHostViolation) {
+      rateRange = Math.max(0, maxIpRateHostViolation - this.#metrics.minIpRate);
+    }
 
     const status = getStatus(sourceInfo, {
       minRate: this.#metrics.minIpRate,
-      rateRange: this.#ipRateRange,
-      lagRatio: this.lagRatio
+      lagRatio: this.lagRatio,
+      rateRange
     });
-    
+
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
       // forward cache to avoid additional lookup
