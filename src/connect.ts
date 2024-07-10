@@ -88,8 +88,10 @@ export class ConnectQOS {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
           res.statusCode = self.#errorStatusCode;
           res.end();
-          if (destroySocket && res.socket?.destroyed === false) { // explicit destroyed check
-            res.socket.destroy(); // if bad actor throw away connection!
+          // H2 must destroy the stream, H1 must destroy the socket
+          const connection = res.stream ? res.stream.session : res.socket;
+          if (destroySocket && connection?.destroyed === false) { // explicit destroyed check
+            connection.destroy(); // if bad actor throw away connection!
           }
           return;
         }
