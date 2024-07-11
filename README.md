@@ -95,6 +95,8 @@ For you tweakers out there, here's some levers to pull:
 	requests below the rate threshold but hitting the target host will not be flagged.
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
+*	**errorResponseDelay** (default: `0`) - Number of milliseconds to delay sending an error response to
+	bad actors. A value of 0 will result in the response being sent synchronously before returning from the middleware.
 * **historySize** (default: `200`) - The LRU history size to use in
   tracking bad actors. Hosts and IPs both get their own dedicated LRU.
 * **maxAge** (default: `10000`) - Time (in ms) before history is purged.
