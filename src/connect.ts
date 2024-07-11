@@ -89,9 +89,14 @@ export class ConnectQOS {
           res.statusCode = self.#errorStatusCode;
           res.end();
           // H2 must destroy the stream, H1 must destroy the socket
-          const connection = res.stream ? res.stream.session : res.socket;
-          if (destroySocket && connection?.destroyed === false) { // explicit destroyed check
-            connection.destroy(); // if bad actor throw away connection!
+          if (res.stream) { // H2
+            if (res.stream.session?.destroyed === false) {
+              res.stream.session.close();
+            }
+          } else { // H1
+            if (res.socket?.destroyed === false) {
+              res.socket.destroySoon();
+            }
           }
           return;
         }

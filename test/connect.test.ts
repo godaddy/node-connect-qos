@@ -118,23 +118,23 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     const writeHead = jest.fn();
     const end = jest.fn();
-    const destroy = jest.fn();
-    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    const destroySoon = jest.fn();
+    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
     qos.isBadHost('goodHost', true);
-    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).toHaveBeenCalled;
-    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    expect(destroySoon).toHaveBeenCalled;
+    middleware({ headers: { host: 'goodHost' }, socket: { remoteAddress: 'badIp' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: true } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
   });
 
   it('beforeThrottle NOT invoked if bad host but IP whitelisted', () => {
@@ -145,23 +145,23 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     const writeHead = jest.fn();
     const end = jest.fn();
-    const destroy = jest.fn();
-    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    const destroySoon = jest.fn();
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
     qos.isBadHost('badHost', true);
-    middleware({ headers: { host: 'badHost' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    middleware({ headers: { host: 'badHost' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).toHaveBeenCalled;
-    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    expect(destroySoon).toHaveBeenCalled;
+    middleware({ headers: { host: 'badHost' }, socket: { remoteAddress: 'goodIp' } } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: true } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
   });
 
   it('beforeThrottle invoked if bad host', () => {
@@ -171,23 +171,23 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     const writeHead = jest.fn();
     const end = jest.fn();
-    const destroy = jest.fn();
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    const destroySoon = jest.fn();
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
     qos.isBadHost('unknown', true);
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: true } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: true } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    expect(destroySoon).not.toHaveBeenCalled;
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).toHaveBeenCalled;
+    expect(destroySoon).toHaveBeenCalled;
   });
 
   it('beforeThrottle invoked if bad host but not destroyed', () => {
@@ -197,18 +197,18 @@ describe('getMiddleware', () => {
     expect(typeof middleware).toEqual('function');
     const writeHead = jest.fn();
     const end = jest.fn();
-    const destroy = jest.fn();
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    const destroySoon = jest.fn();
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).not.toHaveBeenCalled;
     expect(writeHead).not.toHaveBeenCalled;
     expect(end).not.toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
     qos.isBadHost('unknown', true);
-    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroy, destroyed: false } }, () => {});
+    middleware({ headers: {} } as IncomingMessage, { writeHead, end, socket: { destroySoon, destroyed: false } }, () => {});
     expect(beforeThrottle).toHaveBeenCalled;
     expect(writeHead).toHaveBeenCalled;
     expect(end).toHaveBeenCalled;
-    expect(destroy).not.toHaveBeenCalled;
+    expect(destroySoon).not.toHaveBeenCalled;
   });
 
   it('beforeThrottle invoked if badHost', () => {
