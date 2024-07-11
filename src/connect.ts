@@ -1,7 +1,7 @@
 import toobusy from 'toobusy-js';
 import { Metrics, MetricsOptions, ActorStatus, BadActorType, CacheItem } from './metrics';
-import { IncomingMessage } from 'http';
-import { Http2ServerRequest } from 'http2';
+import { IncomingMessage, ServerResponse } from 'http';
+import { Http2ServerRequest, Http2ServerResponse } from 'http2';
 import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest } from './util';
 
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
@@ -15,6 +15,7 @@ export interface ConnectQOSOptions extends MetricsOptions {
   minLag?: number;
   maxLag?: number;
   errorStatusCode?: number;
+  errorResponseDelay?: number;
   httpBehindProxy?: boolean;
   httpsBehindProxy?: boolean;
 }
@@ -25,6 +26,7 @@ export class ConnectQOS {
       minLag = 70,
       maxLag = 300,
       errorStatusCode = 503,
+      errorResponseDelay = 0,
       httpBehindProxy = false, // must be explicit to enable
       httpsBehindProxy = false, // must be explicit to enable
       ...metricOptions
@@ -36,6 +38,7 @@ export class ConnectQOS {
     this.#errorStatusCode = errorStatusCode;
     this.#httpBehindProxy = httpBehindProxy;
     this.#httpsBehindProxy = httpsBehindProxy;
+    this.#errorResponseDelay = errorResponseDelay;
 
     // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
     // toobusy.maxLag(this.#maxLag);
@@ -53,6 +56,7 @@ export class ConnectQOS {
   #errorStatusCode: number;
   #httpBehindProxy: boolean;
   #httpsBehindProxy: boolean;
+  #errorResponseDelay: number;
   #metrics: Metrics;
 
   get minLag(): number {
@@ -81,24 +85,29 @@ export class ConnectQOS {
 
   getMiddleware({ beforeThrottle, destroySocket = true }: GetMiddlewareOptions = {}) {
     const self = this;
+    function sendError(res: Http2ServerResponse | ServerResponse) {
+      res.statusCode = self.#errorStatusCode;
+      res.end();
+      if (destroySocket) {
+        // H2 must destroy the stream, H1 must destroy the socket
+        if ('stream' in res) { // H2
+          if (res.stream.session?.destroyed === false) {
+            res.stream.session.close();
+          }
+        } else { // H1
+          if (res.socket?.destroyed === false) {
+            res.socket.destroySoon();
+          }
+        }
+      }
+    }
+
     return function QOSMiddleware(req, res, next) {
       const reason = self.shouldThrottleRequest(req);
       if (reason) {
         if (!beforeThrottle || beforeThrottle(self, req, reason as string) !== false) {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
-          res.statusCode = self.#errorStatusCode;
-          res.end();
-          // H2 must destroy the stream, H1 must destroy the socket
-          if (res.stream) { // H2
-            if (res.stream.session?.destroyed === false) {
-              res.stream.session.close();
-            }
-          } else { // H1
-            if (res.socket?.destroyed === false) {
-              res.socket.destroySoon();
-            }
-          }
-          return;
+          return void self.#errorResponseDelay ? setTimeout(sendError, self.#errorResponseDelay, res).unref() : sendError(res);
         }
       }
 

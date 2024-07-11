@@ -1,3 +1,19 @@
+## 5.5.0
+
+- **Feature** Add support for `errorResponseDelay` option
+
+## 5.4.0
+
+- **Feature** Add support for closing http/2 connections
+
+## 5.3.0
+
+- **Feature** Add support for adjusting IP throttle rate based on host ratio
+
+## 5.2.0
+
+- **Feature** Add support for throttling based on host ratio
+
 ## 5.1.0
 
 - **Breaking** Options remain identical but rate limiting is now
