@@ -88,17 +88,8 @@ export class ConnectQOS {
     function sendError(res: Http2ServerResponse | ServerResponse) {
       res.statusCode = self.#errorStatusCode;
       res.end();
-      if (destroySocket) {
-        // H2 must destroy the stream, H1 must destroy the socket
-        if ('stream' in res) { // H2
-          if (res.stream.session?.destroyed === false) {
-            res.stream.session.close();
-          }
-        } else { // H1
-          if (res.socket?.destroyed === false) {
-            res.socket.destroySoon();
-          }
-        }
+      if (destroySocket && res.socket?.destroyed === false) {
+        res.socket.destroySoon();
       }
     }
 
