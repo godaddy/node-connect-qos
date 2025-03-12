@@ -94,7 +94,7 @@ export class Metrics {
   #minHostRequests: number;
   #maxHostRatio: number;
   #hostRatioMaxCount: number;
-  #hostRatioCount: number = 0;
+  #hostRatioRequestHistory: Array<number> = [];
   #hostRatioViolations = new Set<string>();
   #hostRatioCounts = new Map<string, number>();
   #minIpRate: number;
@@ -168,19 +168,23 @@ export class Metrics {
   trackHost(source: string, cache?: CacheItem): CacheItem|undefined {
     if (this.#maxHostRatio) {
       // only track if ratio limits enabled
-      this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
-      this.#hostRatioCount++;
+      if (!this.#hostWhitelist.has(source)) {
+        this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
+      }
+      this.#hostRatioRequestHistory = this.#hostRatioRequestHistory
+        .concat(Date.now())
+        .filter((ts) => ts >= Date.now() - 60000); // 1 minute history
 
-      if (this.#hostRatioCount >= this.#hostRatioMaxCount) {
+      if (this.#hostRatioRequestHistory.length >= this.#hostRatioMaxCount) {
         // check for violations once we have sufficient history
-        const maxCount = Math.round(this.#hostRatioCount * this.#maxHostRatio);
+        const maxCount = Math.round(this.#hostRatioRequestHistory.length * this.#maxHostRatio);
         this.#hostRatioViolations = [...this.#hostRatioCounts.entries()]
           .reduce((violations, [source, count]) => {
             if (count > maxCount) violations.add(source);
             return violations;
           }, new Set<string>());
         this.#hostRatioCounts.clear();
-        this.#hostRatioCount = 0;
+        this.#hostRatioRequestHistory = [];
       }
     }
 
