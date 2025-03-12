@@ -214,4 +214,12 @@ describe('maxHostRatio', () => {
     Array.from({ length: Math.round(requiredHits * 0.6) }, () => metrics.trackHost('b')); // 60% to 'b'
     expect([...metrics.hostRatioViolations.values()]).toEqual(['b']);
   });
+
+  it('will not report if host is whitelisted', () => {
+    const metrics = new Metrics({ maxHostRatio: 0.5, hostWhitelist: new Set(['b']) });
+    const requiredHits = Math.ceil(metrics.maxHostRatio * 100 * 10); // 10x host ratio required before reporting violations
+    Array.from({ length: Math.round(requiredHits * 0.4) }, () => metrics.trackHost('a')); // 40% to 'a'
+    Array.from({ length: Math.round(requiredHits * 0.6) }, () => metrics.trackHost('b')); // 60% to 'b'
+    expect([...metrics.hostRatioViolations.values()]).toEqual([]);
+  });
 });
