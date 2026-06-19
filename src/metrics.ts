@@ -268,6 +268,7 @@ export class Metrics {
   }
 
   trackSubnet(source: string, cache?: CacheItem): CacheItem|undefined {
+    if (this.#subnetWhitelist.has(source)) return;
     return track(source, {
       lru: this.#subnets,
       cache,

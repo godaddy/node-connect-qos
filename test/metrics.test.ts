@@ -280,7 +280,8 @@ describe('getSubnetInfo', () => {
 
   it('returns whitelisted if in list', () => {
     const metrics = new Metrics({ subnetWhitelist: new Set(['1.2.3']), minSubnetRate: 1, maxSubnetRate: 1 });
-    metrics.trackSubnet('1.2.3'); // would not normally be tracked if whitelisted, but no affect
+    metrics.trackSubnet('1.2.3'); // whitelisted — should not be written to LRU
+    expect(metrics.subnets.get('1.2.3')).toEqual(undefined); // never stored
     expect(metrics.getSubnetInfo('1.2.3')).toEqual(ActorStatus.Whitelisted); // no history required
     metrics.trackSubnet('9.9.9');
     expect(typeof metrics.getSubnetInfo('9.9.9')).toEqual('object');
