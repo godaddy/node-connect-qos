@@ -320,6 +320,14 @@ describe('isBadSubnet', () => {
     expect(qos.isBadSubnet('1.2.3')).toEqual(true);
     expect(qos.metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(1); // bad subnets won't track
   });
+
+  it('resolves subnet from request socket address', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    const req = { headers: {}, socket: { remoteAddress: '1.2.3.4' } } as IncomingMessage;
+    expect(qos.isBadSubnet(req)).toEqual(false);       // first hit — insufficient history
+    expect(qos.isBadSubnet(req)).toEqual(true);        // second hit — bad subnet
+    expect(qos.metrics.subnets.get('1.2.3')?.history.length).toEqual(1); // bad subnets won't track
+  });
 });
 
 describe('shouldThrottleRequest', () => {
