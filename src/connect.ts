@@ -136,17 +136,26 @@ export class ConnectQOS {
 
     if (subnetStatus === ActorStatus.Bad) return BadActorType.badSubnet;
 
-    // If host is exceeding host ratio and IP/subnet rate override is either not set or exceeded, return hostViolation status
+    // If host is exceeding host ratio, apply per-actor rate overrides if configured
     if (this.metrics.hostRatioViolations.has(host)) {
-      // IP check (fixed: correctly handles maxIpRateHostViolation < minIpRate)
       const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
-      const violationMin = Math.min(maxIpRateHostViolation, this.#metrics.minIpRate);
-      const violationRange = Math.max(0, maxIpRateHostViolation - violationMin);
-      if (!maxIpRateHostViolation || this.getIpStatus(req, false, violationRange, violationMin) === ActorStatus.Bad) {
+      const maxSubnetRateHostViolation = this.#metrics.maxSubnetRateHostViolation;
+
+      if (!maxIpRateHostViolation && !maxSubnetRateHostViolation) {
+        // No per-actor override configured — unconditional host violation
         return BadActorType.hostViolation;
       }
-      // Subnet check (only applies when maxSubnetRateHostViolation is configured)
-      const maxSubnetRateHostViolation = this.#metrics.maxSubnetRateHostViolation;
+
+      // IP override: only flag if IP rate exceeds threshold
+      if (maxIpRateHostViolation) {
+        const violationMin = Math.min(maxIpRateHostViolation, this.#metrics.minIpRate);
+        const violationRange = Math.max(0, maxIpRateHostViolation - violationMin);
+        if (this.getIpStatus(req, false, violationRange, violationMin) === ActorStatus.Bad) {
+          return BadActorType.hostViolation;
+        }
+      }
+
+      // Subnet override: only flag if subnet rate exceeds threshold
       if (maxSubnetRateHostViolation) {
         const subnetViolationMin = Math.min(maxSubnetRateHostViolation, this.#metrics.minSubnetRate);
         const subnetViolationRange = Math.max(0, maxSubnetRateHostViolation - subnetViolationMin);

@@ -244,6 +244,11 @@ describe('maxHostRatio', () => {
 });
 
 describe('resolveSubnetFromIp', () => {
+  it('throws if maskBits is out of range', () => {
+    expect(() => resolveSubnetFromIp('1.2.3.4', 19 as any)).toThrow();
+    expect(() => resolveSubnetFromIp('1.2.3.4', 31 as any)).toThrow();
+  });
+
   it('/24 (default): 1.2.3.4 → 1.2.3.0', () => {
     expect(resolveSubnetFromIp('1.2.3.4')).toEqual('1.2.3.0');
   });

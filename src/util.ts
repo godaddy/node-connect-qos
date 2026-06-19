@@ -32,6 +32,7 @@ const IPV4_MAPPED_REGEX = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i;
 export type SubnetMaskBits = 20|21|22|23|24|25|26|27|28|29|30;
 
 export function resolveSubnetFromIp(ip: string, maskBits: SubnetMaskBits = 24): string {
+  if (maskBits < 20 || maskBits > 30) throw new Error(`maskBits ${maskBits} must be between 20 and 30`);
   // IPv4-mapped IPv6 (::ffff:a.b.c.d) — extract the IPv4 portion
   const mappedMatch = IPV4_MAPPED_REGEX.exec(ip);
   const ipv4 = mappedMatch ? mappedMatch[1] : ip;

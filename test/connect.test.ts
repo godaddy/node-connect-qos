@@ -530,10 +530,10 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('maxSubnetRateHostViolation flags host violations when subnet rate exceeded', () => {
-    // Use a non-violated host to build up subnet history without being blocked,
-    // then switch to a violated host to trigger the hostViolation path.
-    // minSubnetRate:1 satisfies minSubnetRequests=1 after just one tracked request.
-    // maxSubnetRate:10000 prevents badSubnet from firing during setup.
+    // maxIpRateHostViolation is unset — only maxSubnetRateHostViolation gates the violation.
+    // First request hits the violated host but has no subnet history → subnet Good → no hostViolation.
+    // Second request: subnet rate >> threshold → hostViolation.
+    // This proves the subnet check is the actual gate (not an unconditional hostViolation return).
     const qos = new ConnectQOS({
       maxSubnetRateHostViolation: 1,
       minSubnetRate: 1,
@@ -542,14 +542,14 @@ describe('shouldThrottleRequest', () => {
     });
     qos.metrics.hostRatioViolations.add('a');
 
-    // First request to non-violated host 'b': tracked, no history yet → Good
     global.Date.now.mockReturnValue(0);
+    // First request to violated host: no subnet history yet → subnet Good → not hostViolation
     expect(qos.shouldThrottleRequest({
-      headers: { host: 'b' },
+      headers: { host: 'a' },
       socket: { remoteAddress: '1.2.3.4' }
-    } as IncomingMessage)).toEqual(false); // tracked (subnet history: 1 entry)
+    } as IncomingMessage)).toEqual(false);
 
-    // Second request to violated host 'a' at same time: subnet rate = very high >> 1 req/s → hostViolation
+    // Second request to violated host: subnet rate >> 1 req/s → hostViolation
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: '1.2.3.4' }
