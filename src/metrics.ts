@@ -27,6 +27,7 @@ export enum BadActorType {
   badHost = 'badHost',
   hostViolation = 'hostViolation',
   badIp = 'badIp',
+  badSubnet = 'badSubnet',
   userLag = 'userLag'
 }
 

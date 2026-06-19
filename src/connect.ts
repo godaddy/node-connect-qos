@@ -2,7 +2,7 @@ import toobusy from 'toobusy-js';
 import { Metrics, MetricsOptions, ActorStatus, BadActorType, CacheItem } from './metrics';
 import { IncomingMessage, ServerResponse } from 'http';
 import { Http2ServerRequest, Http2ServerResponse } from 'http2';
-import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest } from './util';
+import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest, resolveSubnetFromIp } from './util';
 
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
 export type BeforeThrottleFn = (qos: ConnectQOS, req: IncomingMessage|Http2ServerRequest, reason: string) => boolean|undefined;
@@ -18,7 +18,10 @@ export interface ConnectQOSOptions extends MetricsOptions {
   errorResponseDelay?: number;
   httpBehindProxy?: boolean;
   httpsBehindProxy?: boolean;
+  subnetMaskBits?: 8|16|24|32;
 }
+
+export const DEFAULT_SUBNET_MASK_BITS: number = 24;
 
 export class ConnectQOS {
   constructor(opts?: ConnectQOSOptions) {
@@ -29,6 +32,7 @@ export class ConnectQOS {
       errorResponseDelay = 0,
       httpBehindProxy = false, // must be explicit to enable
       httpsBehindProxy = false, // must be explicit to enable
+      subnetMaskBits = DEFAULT_SUBNET_MASK_BITS,
       ...metricOptions
     } = (opts || {} as ConnectQOSOptions);
 
@@ -39,6 +43,7 @@ export class ConnectQOS {
     this.#httpBehindProxy = httpBehindProxy;
     this.#httpsBehindProxy = httpsBehindProxy;
     this.#errorResponseDelay = errorResponseDelay;
+    this.#subnetMaskBits = subnetMaskBits;
 
     // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
     // toobusy.maxLag(this.#maxLag);
@@ -46,6 +51,7 @@ export class ConnectQOS {
     this.#metrics = new Metrics(metricOptions);
     this.#hostRateRange = this.#metrics.maxHostRate - this.#metrics.minHostRate;
     this.#ipRateRange = this.#metrics.maxIpRate - this.#metrics.minIpRate;
+    this.#subnetRateRange = this.#metrics.maxSubnetRate - this.#metrics.minSubnetRate;
   }
 
   #minLag: number;
@@ -53,6 +59,8 @@ export class ConnectQOS {
   #lagRange: number;
   #hostRateRange: number;
   #ipRateRange: number;
+  #subnetRateRange: number;
+  #subnetMaskBits: 8|16|24|32;
   #errorStatusCode: number;
   #httpBehindProxy: boolean;
   #httpsBehindProxy: boolean;
@@ -115,6 +123,7 @@ export class ConnectQOS {
     const host = this.resolveHost(req);
     const hostStatus = this.getHostStatus(host, false); // defer tracking
     const ipStatus = this.getIpStatus(req, false); // defer tracking
+    const subnetStatus = this.getSubnetStatus(req, false); // defer tracking
 
     // never throttle whitelisted actors
     if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
@@ -123,13 +132,26 @@ export class ConnectQOS {
 
     if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
 
-    // If host is exceeding host ratio and IP rate override is either not set or exceeded, return hostViolation status
-    const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
-    if (
-      this.metrics.hostRatioViolations.has(host) &&
-      (!maxIpRateHostViolation || this.getIpStatus(req, false, Math.max(0, maxIpRateHostViolation - this.#metrics.minIpRate)) === ActorStatus.Bad)
-    ) {
-      return BadActorType.hostViolation;
+    if (subnetStatus === ActorStatus.Bad) return BadActorType.badSubnet;
+
+    // If host is exceeding host ratio and IP/subnet rate override is either not set or exceeded, return hostViolation status
+    if (this.metrics.hostRatioViolations.has(host)) {
+      // IP check (fixed: correctly handles maxIpRateHostViolation < minIpRate)
+      const maxIpRateHostViolation = this.#metrics.maxIpRateHostViolation;
+      const violationMin = Math.min(maxIpRateHostViolation, this.#metrics.minIpRate);
+      const violationRange = Math.max(0, maxIpRateHostViolation - violationMin);
+      if (!maxIpRateHostViolation || this.getIpStatus(req, false, violationRange, violationMin) === ActorStatus.Bad) {
+        return BadActorType.hostViolation;
+      }
+      // Subnet check (only applies when maxSubnetRateHostViolation is configured)
+      const maxSubnetRateHostViolation = this.#metrics.maxSubnetRateHostViolation;
+      if (maxSubnetRateHostViolation) {
+        const subnetViolationMin = Math.min(maxSubnetRateHostViolation, this.#metrics.minSubnetRate);
+        const subnetViolationRange = Math.max(0, maxSubnetRateHostViolation - subnetViolationMin);
+        if (this.getSubnetStatus(req, false, subnetViolationRange, subnetViolationMin) === ActorStatus.Bad) {
+          return BadActorType.hostViolation;
+        }
+      }
     }
 
     // only track if NOT throttling
@@ -186,12 +208,12 @@ export class ConnectQOS {
     ;
   }
 
-  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, rateRange: number = this.#ipRateRange): ActorStatus {
+  getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, rateRange: number = this.#ipRateRange, minRate: number = this.#metrics.minIpRate): ActorStatus {
     const sourceStr: string = this.resolveIp(source);
     const sourceInfo = this.#metrics.getIpInfo(sourceStr);
 
     const status = getStatus(sourceInfo, {
-      minRate: this.#metrics.minIpRate,
+      minRate,
       lagRatio: this.lagRatio,
       rateRange
     });
@@ -209,11 +231,39 @@ export class ConnectQOS {
     return this.getIpStatus(ip, track) === ActorStatus.Bad;
   }
 
+  resolveSubnet(source: string|IncomingMessage|Http2ServerRequest): string {
+    return resolveSubnetFromIp(this.resolveIp(source), this.#subnetMaskBits);
+  }
+
+  getSubnetStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, rateRange: number = this.#subnetRateRange, minRate: number = this.#metrics.minSubnetRate): ActorStatus {
+    const sourceStr: string = this.resolveSubnet(source);
+    const sourceInfo = this.#metrics.getSubnetInfo(sourceStr);
+
+    const status = getStatus(sourceInfo, {
+      minRate,
+      lagRatio: this.lagRatio,
+      rateRange
+    });
+
+    if (track && status === ActorStatus.Good) {
+      // only track if we're NOT throttling
+      // forward cache to avoid additional lookup
+      this.#metrics.trackSubnet(sourceStr, sourceInfo as CacheItem);
+    }
+
+    return status;
+  }
+
+  isBadSubnet(subnet: string|IncomingMessage|Http2ServerRequest, track: boolean = true): boolean {
+    return this.getSubnetStatus(subnet, track) === ActorStatus.Bad;
+  }
+
   trackRequest(req: IncomingMessage|Http2ServerRequest): void {
     const host = this.resolveHost(req);
     this.#metrics.trackHost(host);
     const ip = this.resolveIp(req);
     this.#metrics.trackIp(ip);
+    this.#metrics.trackSubnet(this.resolveSubnet(req));
   }
 }
 
