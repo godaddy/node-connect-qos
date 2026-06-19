@@ -61,7 +61,9 @@ Real coders don't use middleware? We've got you covered too...
 
 ## Additional Methods
 
-Users may also invoke methods `isBadHost(host)` or `isBadIp(ip)` on the `qos` instance to check the status of a given host or IP address. These methods will return `true` or `false` indicating whether the `host` or `ip` is currently considered to be a bad actor. This can be done for TLS/SNI to provide additional layer 5 mitigations.
+Users may also invoke methods `isBadHost(host)`, `isBadIp(ip)`, or `isBadSubnet(subnet)` on the `qos` instance to check the status of a given host, IP, or subnet. These methods will return `true` or `false` indicating whether the actor is currently considered to be a bad actor. This can be done for TLS/SNI to provide additional layer 5 mitigations.
+
+Subnet keys match the format produced by `resolveSubnetFromIp` — the most-significant `subnetMaskBits/8` octets joined by `.` (e.g. `103.142.223` for a `/24`). IPv4-mapped IPv6 (`::ffff:a.b.c.d`) is unwrapped to IPv4 first; pure IPv6 is used as-is.
 
 ## Goals
 
@@ -93,6 +95,19 @@ For you tweakers out there, here's some levers to pull:
   configured `maxHostRatio`. This can be used to increase IP throttling if a particular host is being
   targeted by a large number of IPs. Requests hitting this max rate will receive `hostViolation` while
 	requests below the rate threshold but hitting the target host will not be flagged.
+* **subnetMaskBits** (default: `24`, allowed: `8 | 16 | 24 | 32`) - CIDR prefix length used to derive
+  subnet keys from IP addresses. `/24` groups up to 256 IPs into the same key; `/16` groups up to
+  65,536. Useful for catching distributed attacks spread across many IPs in the same subnet.
+  Set to `32` to disable aggregation (each IPv4 address becomes its own key).
+* **minSubnetRate** (default: `0`) - Minimum subnet request rate (req/s) before a subnet can be
+  flagged. Setting to `0` disables subnet tracking entirely.
+* **maxSubnetRate** (default: `0`) - Maximum subnet rate (req/s) at or above which a subnet is
+  flagged as a bad actor. Disable by setting to `0`.
+* **maxSubnetRateHostViolation** (default: `0`) - Maximum subnet rate (req/s) when the target host
+  is exceeding `maxHostRatio`. When set, only subnets exceeding this rate against a violated host
+  receive `hostViolation`; subnets below the threshold are not flagged. Disable by setting to `0`.
+* **subnetWhitelist** `Set<string>([])` - Subnet keys that are never flagged as bad actors.
+  Key format matches the derived subnet key (e.g. `103.142.223` for a `/24`).
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
   request has been throttled.
 * **errorResponseDelay** (default: `0`) - Number of milliseconds to delay sending an error response to
