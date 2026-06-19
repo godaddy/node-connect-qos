@@ -2,7 +2,8 @@ import {
   Metrics,
   DEFAULT_HOST_WHITELIST, DEFAULT_IP_WHITELIST,
   DEFAULT_MIN_HOST_RATE,DEFAULT_MAX_HOST_RATE,
-  DEFAULT_MIN_IP_RATE,DEFAULT_MAX_IP_RATE
+  DEFAULT_MIN_IP_RATE,DEFAULT_MAX_IP_RATE,
+  resolveSubnetFromIp
 } from '../src';
 import { ActorStatus } from '../src/metrics';
 
@@ -53,6 +54,10 @@ describe('constructor', () => {
   it('throws if minIpRate exceeds maxIpRate', () => {
     expect(() => new Metrics({ minIpRate: 2, maxIpRate: 1 })).toThrow();
   });
+
+  it('throws if minSubnetRate exceeds maxSubnetRate', () => {
+    expect(() => new Metrics({ minSubnetRate: 2, maxSubnetRate: 1 })).toThrow();
+  });
 });
 
 describe('props', () => {
@@ -82,6 +87,20 @@ describe('props', () => {
     expect(metrics.ips.get('a')).toEqual(undefined);
     metrics.trackIp('a');
     expect(typeof metrics.ips.get('a')).toEqual('object');
+  });
+
+  it('do NOT cache subnet if rate limiting disabled', () => {
+    const metrics = new Metrics({ minSubnetRate: 0 });
+    expect(metrics.subnets.get('1.2.3')).toEqual(undefined);
+    metrics.trackSubnet('1.2.3');
+    expect(metrics.subnets.get('1.2.3')).toEqual(undefined);
+  });
+
+  it('cache subnet if rate limiting', () => {
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1 });
+    expect(metrics.subnets.get('1.2.3')).toEqual(undefined);
+    metrics.trackSubnet('1.2.3');
+    expect(typeof metrics.subnets.get('1.2.3')).toEqual('object');
   });
 });
 
@@ -221,5 +240,85 @@ describe('maxHostRatio', () => {
     Array.from({ length: Math.round(requiredHits * 0.4) }, () => metrics.trackHost('a')); // 40% to 'a'
     Array.from({ length: Math.round(requiredHits * 0.6) }, () => metrics.trackHost('b')); // 60% to 'b'
     expect([...metrics.hostRatioViolations.values()]).toEqual([]);
+  });
+});
+
+describe('resolveSubnetFromIp', () => {
+  it('throws if maskBits is out of range', () => {
+    expect(() => resolveSubnetFromIp('1.2.3.4', 19 as any)).toThrow();
+    expect(() => resolveSubnetFromIp('1.2.3.4', 31 as any)).toThrow();
+  });
+
+  it('/24 (default): 1.2.3.4 → 1.2.3.0', () => {
+    expect(resolveSubnetFromIp('1.2.3.4')).toEqual('1.2.3.0');
+  });
+
+  it('/20: 103.142.200.1 → 103.142.192.0', () => {
+    expect(resolveSubnetFromIp('103.142.200.1', 20)).toEqual('103.142.192.0');
+  });
+
+  it('/28: 1.2.3.14 → 1.2.3.0', () => {
+    expect(resolveSubnetFromIp('1.2.3.14', 28)).toEqual('1.2.3.0');
+  });
+
+  it('/30: 1.2.3.7 → 1.2.3.4', () => {
+    expect(resolveSubnetFromIp('1.2.3.7', 30)).toEqual('1.2.3.4');
+  });
+
+  it('IPv4-mapped IPv6: ::ffff:1.2.3.4 → 1.2.3.0 (for /24)', () => {
+    expect(resolveSubnetFromIp('::ffff:1.2.3.4')).toEqual('1.2.3.0');
+  });
+
+  it('pure IPv6 returned as-is', () => {
+    expect(resolveSubnetFromIp('2001:db8::1')).toEqual('2001:db8::1');
+  });
+});
+
+describe('getSubnetInfo', () => {
+  it('returns Good if rate limiting disabled', () => {
+    const metrics = new Metrics({ minSubnetRate: 0 });
+    metrics.trackSubnet('1.2.3');
+    metrics.trackSubnet('1.2.3');
+    metrics.trackSubnet('1.2.3');
+    expect(metrics.getSubnetInfo('1.2.3')).toEqual(ActorStatus.Good);
+  });
+
+  it('returns whitelisted if in list', () => {
+    const metrics = new Metrics({ subnetWhitelist: new Set(['1.2.3']), minSubnetRate: 1, maxSubnetRate: 1 });
+    metrics.trackSubnet('1.2.3'); // whitelisted — should not be written to LRU
+    expect(metrics.subnets.get('1.2.3')).toEqual(undefined); // never stored
+    expect(metrics.getSubnetInfo('1.2.3')).toEqual(ActorStatus.Whitelisted); // no history required
+    metrics.trackSubnet('9.9.9');
+    expect(typeof metrics.getSubnetInfo('9.9.9')).toEqual('object');
+  });
+
+  it('rate measured over time', () => {
+    const maxAge = 1000;
+    const minSubnetRate = 2;
+    const metrics = new Metrics({ maxAge, minSubnetRate, maxSubnetRate: minSubnetRate });
+    expect(metrics.getSubnetInfo('1.2.3')).toEqual(undefined);
+    metrics.trackSubnet('1.2.3');
+    expect(metrics.getSubnetInfo('1.2.3')?.rate).toEqual(0); // does not min
+    for (let i = 1; i <= 10; i++) {
+      const elapsed = i * 100;
+      global.Date.now.mockReturnValue(elapsed);
+      metrics.trackSubnet('1.2.3');
+      expect(metrics.getSubnetInfo('1.2.3')?.rate).toEqual(((i+1) / elapsed) * 1000);
+    }
+  });
+
+  it('purge anything stale prior to getInfo', () => {
+    const maxAge = 1000;
+    const minSubnetRate = 10;
+    const metrics = new Metrics({ maxAge, minSubnetRate, maxSubnetRate: minSubnetRate });
+    let i;
+    for (i = 0; i < minSubnetRate; i++) {
+      metrics.trackSubnet('1.2.3');
+    }
+    expect(metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(minSubnetRate); // nothing dropped
+    expect(metrics.getSubnetInfo('1.2.3')?.rate).toEqual(10000); // no time has passed, so 1ms minimum assumed = 10K RPS
+    global.Date.now.mockReturnValue(maxAge+1);
+    expect(metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(0); // everything is stale
+    expect(metrics.getSubnetInfo('1.2.3')?.rate).toEqual(0); // insufficient history
   });
 });

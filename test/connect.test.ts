@@ -1,5 +1,5 @@
 import { IncomingMessage } from 'http';
-import { ConnectQOS, BeforeThrottleFn, BadActorType } from '../src';
+import { ConnectQOS, BeforeThrottleFn, BadActorType, DEFAULT_SUBNET_MASK_BITS } from '../src';
 import toobusy from 'toobusy-js';
 
 jest.mock('toobusy-js');
@@ -36,6 +36,22 @@ describe('constructor', () => {
     expect(qos.errorStatusCode).toEqual(500);
     expect(qos.httpBehindProxy).toEqual(true);
     expect(qos.httpsBehindProxy).toEqual(true);
+  });
+
+  it('throws if subnetMaskBits is out of range', () => {
+    expect(() => new ConnectQOS({ subnetMaskBits: 19 as any })).toThrow();
+    expect(() => new ConnectQOS({ subnetMaskBits: 31 as any })).toThrow();
+  });
+
+  it('subnetMaskBits defaults to 24', () => {
+    // DEFAULT_SUBNET_MASK_BITS is 24; verify resolveSubnet uses /24 aggregation
+    const qos = new ConnectQOS();
+    expect(DEFAULT_SUBNET_MASK_BITS).toEqual(24);
+    // 1.2.3.4 with /24 mask → subnet key is '1.2.3.0'
+    expect(qos.resolveSubnet({
+      headers: {},
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual('1.2.3.0');
   });
 });
 
@@ -287,6 +303,38 @@ describe('isBadIp', () => {
   });
 });
 
+describe('isBadSubnet', () => {
+  it('returns false if no bad subnets', () => {
+    const qos = new ConnectQOS();
+    expect(qos.isBadSubnet('1.2.3')).toEqual(false);
+  });
+
+  it('returns true if bad subnets', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 2, maxSubnetRate: 2 });
+    expect(qos.isBadSubnet('1.2.3', false)).toEqual(false); // insufficient history
+    qos.isBadSubnet('1.2.3', true);
+    expect(qos.isBadSubnet('1.2.3', false)).toEqual(false); // insufficient history
+    qos.isBadSubnet('1.2.3', true);
+    expect(qos.isBadSubnet('1.2.3', false)).toEqual(true);
+  });
+
+  it('returns true if throttling bad subnets', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    expect(qos.isBadSubnet('1.2.3')).toEqual(false);
+    expect(qos.metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(1);
+    expect(qos.isBadSubnet('1.2.3')).toEqual(true);
+    expect(qos.metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(1); // bad subnets won't track
+  });
+
+  it('resolves subnet from request socket address', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    const req = { headers: {}, socket: { remoteAddress: '1.2.3.4' } } as IncomingMessage;
+    expect(qos.isBadSubnet(req)).toEqual(false);       // first hit — insufficient history
+    expect(qos.isBadSubnet(req)).toEqual(true);        // second hit — bad subnet
+    expect(qos.metrics.subnets.get('1.2.3.0')?.history.length).toEqual(1); // bad subnets won't track
+  });
+});
+
 describe('shouldThrottleRequest', () => {
   it('if host or IP is whitelisted do not throttle', () => {
     const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1, minIpRate: 1, maxIpRate: 1, hostWhitelist: new Set(['goodhost.com']), ipWhitelist: new Set(['goodIp']) });
@@ -410,6 +458,101 @@ describe('shouldThrottleRequest', () => {
     expect(qos.shouldThrottleRequest({
       headers: { host: 'a' },
       socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(BadActorType.hostViolation);
+  });
+
+  it('maxIpRateHostViolation below minIpRate correctly enforces the lower threshold', () => {
+    // Bug: old code computed violationRange = max(0, maxIpRateHostViolation - minIpRate)
+    //      when maxIpRateHostViolation(1) < minIpRate(3), range was 0 and
+    //      dynamicRate = minIpRate(3), so threshold was 3 req/s instead of 1 req/s.
+    // Fix: violationMin = min(maxIpRateHostViolation, minIpRate) = 1,
+    //      violationRange = max(0, 1-1) = 0, dynamicRate = 1 req/s (correct).
+    //
+    // To observe the difference, we need a measured IP rate between 1 and 3 req/s.
+    // With minIpRate:3, maxAge:2000 → minIpRequests = round(3*2) = 6.
+    // Track 6 requests spread evenly so rate = exactly 3 req/s at check time.
+    // Old threshold: 3 req/s, rate(3) > 3 = false (no fire).
+    // New threshold: 1 req/s, rate(3) > 1 = true (fires!).
+    const maxAge = 2000;
+    const qos = new ConnectQOS({
+      maxIpRateHostViolation: 1,
+      minIpRate: 3,
+      maxIpRate: 10000,
+      maxAge
+    });
+    qos.metrics.hostRatioViolations.add('a');
+
+    // Track 6 requests spread over 2000ms (rate = 6/2000ms * 1000 = 3 req/s)
+    const timestamps = [0, 400, 800, 1200, 1600, 2000];
+    for (const t of timestamps) {
+      global.Date.now.mockReturnValue(t);
+      const result = qos.shouldThrottleRequest({
+        headers: { host: 'b' }, // use non-violated host so requests are tracked
+        socket: { remoteAddress: 'badIp' }
+      } as IncomingMessage);
+      expect(result).toEqual(false); // none should throttle (not violated host, IP rate not yet exceeded vs maxIpRate)
+    }
+
+    // Now check against violated host 'a'. Rate is 3 req/s, which is > violationThreshold(1) but not > maxIpRate(10000).
+    // With the fix the check uses threshold=1, so rate(3) > 1 → hostViolation.
+    global.Date.now.mockReturnValue(2000);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: 'badIp' }
+    } as IncomingMessage)).toEqual(BadActorType.hostViolation);
+  });
+
+  it('badSubnet returned when subnet rate exceeded', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    // First request: insufficient history → not throttled
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+    // Second request: rate exceeded → badSubnet
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(BadActorType.badSubnet);
+  });
+
+  it('subnet whitelisted IPs are not flagged as badSubnet', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, subnetWhitelist: new Set(['1.2.3.0']) });
+    // Both requests from 1.2.3.4 (subnet 1.2.3.0/24 is whitelisted) should never get badSubnet
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+  });
+
+  it('maxSubnetRateHostViolation flags host violations when subnet rate exceeded', () => {
+    // maxIpRateHostViolation is unset — only maxSubnetRateHostViolation gates the violation.
+    // First request hits the violated host but has no subnet history → subnet Good → no hostViolation.
+    // Second request: subnet rate >> threshold → hostViolation.
+    // This proves the subnet check is the actual gate (not an unconditional hostViolation return).
+    const qos = new ConnectQOS({
+      maxSubnetRateHostViolation: 1,
+      minSubnetRate: 1,
+      maxSubnetRate: 10000,
+      maxAge: 1000
+    });
+    qos.metrics.hostRatioViolations.add('a');
+
+    global.Date.now.mockReturnValue(0);
+    // First request to violated host: no subnet history yet → subnet Good → not hostViolation
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+
+    // Second request to violated host: subnet rate >> 1 req/s → hostViolation
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'a' },
+      socket: { remoteAddress: '1.2.3.4' }
     } as IncomingMessage)).toEqual(BadActorType.hostViolation);
   });
 });
