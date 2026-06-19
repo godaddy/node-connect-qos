@@ -2,7 +2,7 @@ import toobusy from 'toobusy-js';
 import { Metrics, MetricsOptions, ActorStatus, BadActorType, CacheItem } from './metrics';
 import { IncomingMessage, ServerResponse } from 'http';
 import { Http2ServerRequest, Http2ServerResponse } from 'http2';
-import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest, resolveSubnetFromIp } from './util';
+import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest, resolveSubnetFromIp, SubnetMaskBits } from './util';
 
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
 export type BeforeThrottleFn = (qos: ConnectQOS, req: IncomingMessage|Http2ServerRequest, reason: string) => boolean|undefined;
@@ -18,10 +18,10 @@ export interface ConnectQOSOptions extends MetricsOptions {
   errorResponseDelay?: number;
   httpBehindProxy?: boolean;
   httpsBehindProxy?: boolean;
-  subnetMaskBits?: 8|16|24|32;
+  subnetMaskBits?: SubnetMaskBits;
 }
 
-export const DEFAULT_SUBNET_MASK_BITS: number = 24;
+export const DEFAULT_SUBNET_MASK_BITS: SubnetMaskBits = 24;
 
 export class ConnectQOS {
   constructor(opts?: ConnectQOSOptions) {
@@ -35,6 +35,8 @@ export class ConnectQOS {
       subnetMaskBits = DEFAULT_SUBNET_MASK_BITS,
       ...metricOptions
     } = (opts || {} as ConnectQOSOptions);
+
+    if (subnetMaskBits < 20 || subnetMaskBits > 30) throw new Error(`subnetMaskBits ${subnetMaskBits} must be between 20 and 30`);
 
     this.#minLag = minLag;
     this.#maxLag = maxLag;
@@ -60,7 +62,7 @@ export class ConnectQOS {
   #hostRateRange: number;
   #ipRateRange: number;
   #subnetRateRange: number;
-  #subnetMaskBits: 8|16|24|32;
+  #subnetMaskBits: SubnetMaskBits;
   #errorStatusCode: number;
   #httpBehindProxy: boolean;
   #httpsBehindProxy: boolean;

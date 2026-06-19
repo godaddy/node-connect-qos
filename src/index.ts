@@ -2,7 +2,8 @@ export {
   normalizeHost,
   resolveHostFromRequest,
   resolveIpFromRequest,
-  resolveSubnetFromIp
+  resolveSubnetFromIp,
+  SubnetMaskBits
 } from './util';
 export {
   Metrics,

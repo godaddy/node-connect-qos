@@ -38,15 +38,20 @@ describe('constructor', () => {
     expect(qos.httpsBehindProxy).toEqual(true);
   });
 
+  it('throws if subnetMaskBits is out of range', () => {
+    expect(() => new ConnectQOS({ subnetMaskBits: 19 as any })).toThrow();
+    expect(() => new ConnectQOS({ subnetMaskBits: 31 as any })).toThrow();
+  });
+
   it('subnetMaskBits defaults to 24', () => {
     // DEFAULT_SUBNET_MASK_BITS is 24; verify resolveSubnet uses /24 aggregation
     const qos = new ConnectQOS();
     expect(DEFAULT_SUBNET_MASK_BITS).toEqual(24);
-    // 1.2.3.4 with /24 mask → subnet key is '1.2.3'
+    // 1.2.3.4 with /24 mask → subnet key is '1.2.3.0'
     expect(qos.resolveSubnet({
       headers: {},
       socket: { remoteAddress: '1.2.3.4' }
-    } as IncomingMessage)).toEqual('1.2.3');
+    } as IncomingMessage)).toEqual('1.2.3.0');
   });
 });
 
@@ -326,7 +331,7 @@ describe('isBadSubnet', () => {
     const req = { headers: {}, socket: { remoteAddress: '1.2.3.4' } } as IncomingMessage;
     expect(qos.isBadSubnet(req)).toEqual(false);       // first hit — insufficient history
     expect(qos.isBadSubnet(req)).toEqual(true);        // second hit — bad subnet
-    expect(qos.metrics.subnets.get('1.2.3')?.history.length).toEqual(1); // bad subnets won't track
+    expect(qos.metrics.subnets.get('1.2.3.0')?.history.length).toEqual(1); // bad subnets won't track
   });
 });
 
@@ -512,8 +517,8 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('subnet whitelisted IPs are not flagged as badSubnet', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, subnetWhitelist: new Set(['1.2.3']) });
-    // Both requests from 1.2.3.4 (subnet 1.2.3 is whitelisted) should never get badSubnet
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, subnetWhitelist: new Set(['1.2.3.0']) });
+    // Both requests from 1.2.3.4 (subnet 1.2.3.0/24 is whitelisted) should never get badSubnet
     expect(qos.shouldThrottleRequest({
       headers: { host: 'somehost' },
       socket: { remoteAddress: '1.2.3.4' }

@@ -244,24 +244,24 @@ describe('maxHostRatio', () => {
 });
 
 describe('resolveSubnetFromIp', () => {
-  it('/24 (default): 1.2.3.4 → 1.2.3', () => {
-    expect(resolveSubnetFromIp('1.2.3.4')).toEqual('1.2.3');
+  it('/24 (default): 1.2.3.4 → 1.2.3.0', () => {
+    expect(resolveSubnetFromIp('1.2.3.4')).toEqual('1.2.3.0');
   });
 
-  it('/16: 1.2.3.4 → 1.2', () => {
-    expect(resolveSubnetFromIp('1.2.3.4', 16)).toEqual('1.2');
+  it('/20: 103.142.200.1 → 103.142.192.0', () => {
+    expect(resolveSubnetFromIp('103.142.200.1', 20)).toEqual('103.142.192.0');
   });
 
-  it('/8: 1.2.3.4 → 1', () => {
-    expect(resolveSubnetFromIp('1.2.3.4', 8)).toEqual('1');
+  it('/28: 1.2.3.14 → 1.2.3.0', () => {
+    expect(resolveSubnetFromIp('1.2.3.14', 28)).toEqual('1.2.3.0');
   });
 
-  it('/32: 1.2.3.4 → 1.2.3.4 (no aggregation)', () => {
-    expect(resolveSubnetFromIp('1.2.3.4', 32)).toEqual('1.2.3.4');
+  it('/30: 1.2.3.7 → 1.2.3.4', () => {
+    expect(resolveSubnetFromIp('1.2.3.7', 30)).toEqual('1.2.3.4');
   });
 
-  it('IPv4-mapped IPv6: ::ffff:1.2.3.4 → 1.2.3 (for /24)', () => {
-    expect(resolveSubnetFromIp('::ffff:1.2.3.4')).toEqual('1.2.3');
+  it('IPv4-mapped IPv6: ::ffff:1.2.3.4 → 1.2.3.0 (for /24)', () => {
+    expect(resolveSubnetFromIp('::ffff:1.2.3.4')).toEqual('1.2.3.0');
   });
 
   it('pure IPv6 returned as-is', () => {
