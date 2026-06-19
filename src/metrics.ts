@@ -95,11 +95,11 @@ export class Metrics {
     this.#minIpRate = minIpRate;
     this.#maxIpRate = maxIpRate;
     this.#maxIpRateHostViolation = maxIpRateHostViolation;
-    this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
+    this.#minIpRequests = Math.ceil(minIpRate * (maxAge/1000));
     this.#minSubnetRate = minSubnetRate;
     this.#maxSubnetRate = maxSubnetRate;
     this.#maxSubnetRateHostViolation = maxSubnetRateHostViolation;
-    this.#minSubnetRequests = Math.round(minSubnetRate * (maxAge/1000));
+    this.#minSubnetRequests = Math.ceil(minSubnetRate * (maxAge/1000));
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#subnetWhitelist = subnetWhitelist;
