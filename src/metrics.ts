@@ -9,8 +9,12 @@ export type MetricsOptions = {
   minIpRate?: number;
   maxIpRate?: number;
   maxIpRateHostViolation?: number;
+  minSubnetRate?: number;
+  maxSubnetRate?: number;
+  maxSubnetRateHostViolation?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
+  subnetWhitelist?: Set<string>;
 }
 
 export enum ActorStatus {
@@ -40,8 +44,12 @@ export const DEFAULT_MAX_HOST_RATIO: number = 0; // disabled
 export const DEFAULT_MIN_IP_RATE: number = 0; // disabled
 export const DEFAULT_MAX_IP_RATE: number = 0; // disabled
 export const DEFAULT_MAX_IP_RATE_BUSY_HOST: number = 0; // disabled
+export const DEFAULT_MIN_SUBNET_RATE: number = 0; // disabled
+export const DEFAULT_MAX_SUBNET_RATE: number = 0; // disabled
+export const DEFAULT_MAX_SUBNET_RATE_BUSY_HOST: number = 0; // disabled
 export const DEFAULT_HOST_WHITELIST = ['localhost'];
 export const DEFAULT_IP_WHITELIST = [];
+export const DEFAULT_SUBNET_WHITELIST = [];
 
 export class Metrics {
   constructor(opts?: MetricsOptions) {
@@ -54,12 +62,17 @@ export class Metrics {
       minIpRate = DEFAULT_MIN_IP_RATE,
       maxIpRate = DEFAULT_MAX_IP_RATE,
       maxIpRateHostViolation = DEFAULT_MAX_IP_RATE_BUSY_HOST,
+      minSubnetRate = DEFAULT_MIN_SUBNET_RATE,
+      maxSubnetRate = DEFAULT_MAX_SUBNET_RATE,
+      maxSubnetRateHostViolation = DEFAULT_MAX_SUBNET_RATE_BUSY_HOST,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
-      ipWhitelist = new Set(DEFAULT_IP_WHITELIST)
+      ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
+      subnetWhitelist = new Set(DEFAULT_SUBNET_WHITELIST)
     } = (opts || {} as MetricsOptions);
 
     if (minHostRate > maxHostRate) throw new Error(`${minHostRate} minHostRate cannot exceed ${maxHostRate} maxHostRate`)
     if (minIpRate > maxIpRate) throw new Error(`${minIpRate} minIpRate cannot exceed ${maxIpRate} maxIpRate`)
+    if (minSubnetRate > maxSubnetRate) throw new Error(`${minSubnetRate} minSubnetRate cannot exceed ${maxSubnetRate} maxSubnetRate`)
 
     const lruOptions: LRU.Options<string, CacheItem> = {
       max: historySize,
@@ -70,6 +83,7 @@ export class Metrics {
     };
     this.#hosts = new LRU(lruOptions);
     this.#ips = new LRU(lruOptions);
+    this.#subnets = new LRU(lruOptions);
     this.#historySize = historySize;
     this.#maxAge = maxAge;
     this.#minHostRate = minHostRate;
@@ -81,12 +95,18 @@ export class Metrics {
     this.#maxIpRate = maxIpRate;
     this.#maxIpRateHostViolation = maxIpRateHostViolation;
     this.#minIpRequests = Math.round(minIpRate * (maxAge/1000));
+    this.#minSubnetRate = minSubnetRate;
+    this.#maxSubnetRate = maxSubnetRate;
+    this.#maxSubnetRateHostViolation = maxSubnetRateHostViolation;
+    this.#minSubnetRequests = Math.round(minSubnetRate * (maxAge/1000));
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
+    this.#subnetWhitelist = subnetWhitelist;
   }
 
   #hosts: LRU<string, CacheItem>;
   #ips: LRU<string, CacheItem>;
+  #subnets: LRU<string, CacheItem>;
   #historySize: number;
   #maxAge: number;
   #minHostRate: number;
@@ -101,8 +121,13 @@ export class Metrics {
   #maxIpRate: number;
   #maxIpRateHostViolation: number;
   #minIpRequests: number;
+  #minSubnetRate: number;
+  #maxSubnetRate: number;
+  #maxSubnetRateHostViolation: number;
+  #minSubnetRequests: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
+  #subnetWhitelist: Set<string>;
 
   get hosts(): LRU<string, CacheItem> {
     return this.#hosts;
@@ -110,6 +135,10 @@ export class Metrics {
 
   get ips(): LRU<string, CacheItem> {
     return this.#ips;
+  }
+
+  get subnets(): LRU<string, CacheItem> {
+    return this.#subnets;
   }
 
   get minHostRate(): number {
@@ -140,6 +169,18 @@ export class Metrics {
     return this.#maxIpRateHostViolation;
   }
 
+  get minSubnetRate(): number {
+    return this.#minSubnetRate;
+  }
+
+  get maxSubnetRate(): number {
+    return this.#maxSubnetRate;
+  }
+
+  get maxSubnetRateHostViolation(): number {
+    return this.#maxSubnetRateHostViolation;
+  }
+
   get historySize(): number {
     return this.#historySize;
   }
@@ -154,6 +195,10 @@ export class Metrics {
 
   get ipWhitelist(): Set<string> {
     return this.#ipWhitelist;
+  }
+
+  get subnetWhitelist(): Set<string> {
+    return this.#subnetWhitelist;
   }
 
   getHostInfo(source: string): ActorStatus|CacheItem|undefined {
@@ -209,6 +254,23 @@ export class Metrics {
       lru: this.#ips,
       cache,
       minRate: this.#minIpRate
+    });
+  }
+
+  getSubnetInfo(source: string): ActorStatus|CacheItem|undefined {
+    return getInfo(source, {
+      lru: this.#subnets,
+      whitelist: this.#subnetWhitelist,
+      minRequests: this.#minSubnetRequests,
+      maxAge: this.#maxAge
+    });
+  }
+
+  trackSubnet(source: string, cache?: CacheItem): CacheItem|undefined {
+    return track(source, {
+      lru: this.#subnets,
+      cache,
+      minRate: this.#minSubnetRate
     });
   }
 }
