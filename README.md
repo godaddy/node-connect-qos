@@ -101,8 +101,7 @@ For you tweakers out there, here's some levers to pull:
   spread across many IPs in the same subnet.
 * **minSubnetRate** (default: `0`) - Minimum subnet request rate (req/s) before a subnet can be
   flagged. Setting to `0` disables subnet tracking entirely.
-* **maxSubnetRate** (default: `0`) - Maximum subnet rate (req/s) above which a subnet is
-  flagged as a bad actor. Disable by setting to `0`.
+* **maxSubnetRate** (default: `0`) - Maximum subnet rate (req/s) if lag is <= minLag. Disable by setting to `0`.
 * **maxSubnetRateHostViolation** (default: `0`) - Maximum subnet rate (req/s) when the target host
   is exceeding `maxHostRatio`. When set, only subnets exceeding this rate against a violated host
   receive `hostViolation`; subnets below the threshold are not flagged. Disable by setting to `0`.
