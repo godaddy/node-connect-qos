@@ -43,6 +43,11 @@ describe('constructor', () => {
     expect(() => new ConnectQOS({ subnetMaskBits: 31 as any })).toThrow();
   });
 
+  it('throws if minLag >= maxLag', () => {
+    expect(() => new ConnectQOS({ minLag: 100, maxLag: 100 })).toThrow();
+    expect(() => new ConnectQOS({ minLag: 200, maxLag: 100 })).toThrow();
+  });
+
   it('subnetMaskBits defaults to 24', () => {
     // DEFAULT_SUBNET_MASK_BITS is 24; verify resolveSubnet uses /24 aggregation
     const qos = new ConnectQOS();
@@ -230,6 +235,18 @@ describe('getMiddleware', () => {
     expect(beforeThrottle).toHaveBeenCalledWith(qos, req, BadActorType.badHost);
     expect(writeHead).not.toHaveBeenCalled();
     expect(end).toHaveBeenCalled();
+  });
+
+  it('errorResponseDelay defers sendError via setTimeout', () => {
+    jest.useFakeTimers();
+    const qos = new ConnectQOS({ maxAge: 1000, minHostRate: 1, maxHostRate: 1, errorResponseDelay: 200 });
+    qos.isBadHost('unknown', true);
+    const end = jest.fn();
+    qos.getMiddleware()({ headers: {} } as IncomingMessage, { end, socket: { destroyed: true } }, () => {});
+    expect(end).not.toHaveBeenCalled(); // not called yet — waiting for delay
+    jest.advanceTimersByTime(200);
+    expect(end).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
   });
 
   it('beforeThrottle invoked if badHost bad not blocked if returns false', () => {
@@ -595,5 +612,32 @@ describe('resolveIp', () => {
       headers: { 'x-forwarded-for': 'a' },
       socket: { remoteAddress: 'ignored' }
     } as IncomingMessage)).toEqual('a');
+  });
+
+  it('extracts only the first IP from a comma-separated x-forwarded-for', () => {
+    const qos = new ConnectQOS({ httpBehindProxy: true });
+    expect(qos.resolveIp({
+      headers: { 'x-forwarded-for': '1.2.3.4, 10.0.0.1, 10.0.0.2' },
+      socket: { remoteAddress: 'ignored' }
+    } as IncomingMessage)).toEqual('1.2.3.4');
+  });
+
+  it('uses socket.remoteAddress for HTTP/1.1 TLS even if httpBehindProxy is true', () => {
+    // httpBehindProxy applies to plain HTTP. For TLS (socket.encrypted=true), httpsBehindProxy
+    // must be used instead — otherwise an attacker on an HTTPS connection could spoof their IP
+    // via x-forwarded-for even though no trusted proxy set that header.
+    const qos = new ConnectQOS({ httpBehindProxy: true, httpsBehindProxy: false });
+    expect(qos.resolveIp({
+      headers: { 'x-forwarded-for': 'spoofed' },
+      socket: { remoteAddress: '1.2.3.4', encrypted: true }
+    } as IncomingMessage)).toEqual('1.2.3.4');
+  });
+
+  it('trusts x-forwarded-for for HTTP/1.1 TLS when httpsBehindProxy is true', () => {
+    const qos = new ConnectQOS({ httpsBehindProxy: true });
+    expect(qos.resolveIp({
+      headers: { 'x-forwarded-for': '5.6.7.8' },
+      socket: { remoteAddress: 'ignored', encrypted: true }
+    } as IncomingMessage)).toEqual('5.6.7.8');
   });
 });

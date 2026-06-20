@@ -212,14 +212,16 @@ export class Metrics {
   }
 
   trackHost(source: string, cache?: CacheItem): CacheItem|undefined {
+    if (this.#hostWhitelist.has(source)) return;
     if (this.#maxHostRatio) {
-      // only track if ratio limits enabled
-      if (!this.#hostWhitelist.has(source)) {
-        this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
-      }
-      this.#hostRatioRequestHistory = this.#hostRatioRequestHistory
-        .concat(Date.now())
-        .filter((ts) => ts >= Date.now() - 60000); // 1 minute history
+      // only track if ratio limits enabled (source is never whitelisted here — guarded above)
+      this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
+      const now = Date.now();
+      this.#hostRatioRequestHistory.push(now);
+      const cutoff = now - 60000; // 1 minute history
+      let staleCount = 0;
+      while (staleCount < this.#hostRatioRequestHistory.length && this.#hostRatioRequestHistory[staleCount] < cutoff) staleCount++;
+      if (staleCount) this.#hostRatioRequestHistory.splice(0, staleCount);
 
       if (this.#hostRatioRequestHistory.length >= this.#hostRatioMaxCount) {
         // check for violations once we have sufficient history
@@ -251,6 +253,7 @@ export class Metrics {
   }
 
   trackIp(source: string, cache?: CacheItem): CacheItem|undefined {
+    if (this.#ipWhitelist.has(source)) return;
     return track(source, {
       lru: this.#ips,
       cache,

@@ -115,7 +115,8 @@ describe('getHostInfo', () => {
 
   it('returns whitelisted if in list', () => {
     const metrics = new Metrics({ hostWhitelist: new Set(['a']), minHostRate: 1, maxHostRate: 1 });
-    metrics.trackHost('a'); // would not normally be tracked if whitelisted, but no affect
+    metrics.trackHost('a'); // whitelisted — should not be written to LRU
+    expect(metrics.hosts.get('a')).toEqual(undefined); // never stored
     expect(metrics.getHostInfo('a')).toEqual(ActorStatus.Whitelisted); // no history required
     metrics.trackHost('b');
     expect(typeof metrics.getHostInfo('b')).toEqual('object');
@@ -163,7 +164,8 @@ describe('getIpInfo', () => {
 
   it('returns whitelisted if in list', () => {
     const metrics = new Metrics({ ipWhitelist: new Set(['a']), minIpRate: 1, maxIpRate: 1 });
-    metrics.trackIp('a'); // would not normally be tracked if whitelisted, but no affect
+    metrics.trackIp('a'); // whitelisted — should not be written to LRU
+    expect(metrics.ips.get('a')).toEqual(undefined); // never stored
     expect(metrics.getIpInfo('a')).toEqual(ActorStatus.Whitelisted); // no history required
     metrics.trackIp('b');
     expect(typeof metrics.getIpInfo('b')).toEqual('object');
