@@ -37,6 +37,7 @@ export class ConnectQOS {
     } = (opts || {} as ConnectQOSOptions);
 
     if (subnetMaskBits < 20 || subnetMaskBits > 30) throw new Error(`subnetMaskBits ${subnetMaskBits} must be between 20 and 30`);
+    if (minLag >= maxLag) throw new Error(`${minLag} minLag must be less than ${maxLag} maxLag`);
 
     this.#minLag = minLag;
     this.#maxLag = maxLag;
@@ -112,7 +113,7 @@ export class ConnectQOS {
       if (reason) {
         if (!beforeThrottle || beforeThrottle(self, req, reason as string) !== false) {
           // if no throttle handler OR the throttle handler does not explicitly reject, do it
-          return void self.#errorResponseDelay ? setTimeout(sendError, self.#errorResponseDelay, res).unref() : sendError(res);
+          return void (self.#errorResponseDelay ? setTimeout(sendError, self.#errorResponseDelay, res).unref() : sendError(res));
         }
       }
 
@@ -193,12 +194,13 @@ export class ConnectQOS {
     const sourceStr: string = this.resolveHost(source);
     const sourceInfo = this.#metrics.getHostInfo(sourceStr);
 
+    if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
+
     const status = getStatus(sourceInfo, {
       minRate: this.#metrics.minHostRate,
       rateRange: this.#hostRateRange,
       lagRatio: this.lagRatio
     });
-    if (sourceInfo === ActorStatus.Whitelisted) return ActorStatus.Whitelisted;
 
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
@@ -214,9 +216,12 @@ export class ConnectQOS {
   }
 
   resolveIp(source: string|IncomingMessage|Http2ServerRequest): string {
-    return typeof source === 'string' ? source
-      : resolveIpFromRequest(source, (source as Http2ServerRequest).scheme === 'https' ? this.#httpsBehindProxy : this.#httpBehindProxy)
-    ;
+    if (typeof source === 'string') return source;
+    // HTTP/2: use :scheme pseudo-header. HTTP/1.1: fall back to socket.encrypted (set by Node's TLS stack).
+    // Without the socket.encrypted check, HTTP/1.1 HTTPS connections fall through to httpBehindProxy,
+    // causing QOS to trust x-forwarded-for for direct TLS connections (IP spoofing risk).
+    const isHttps = (source as Http2ServerRequest).scheme === 'https' || (source.socket as any)?.encrypted === true;
+    return resolveIpFromRequest(source, isHttps ? this.#httpsBehindProxy : this.#httpBehindProxy);
   }
 
   getIpStatus(source: string|IncomingMessage|Http2ServerRequest, track: boolean = true, rateRange: number = this.#ipRateRange, minRate: number = this.#metrics.minIpRate): ActorStatus {
