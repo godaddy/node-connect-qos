@@ -19,8 +19,9 @@ export function resolveHostFromRequest(req: IncomingMessage|Http2ServerRequest):
 export function resolveIpFromRequest(req: IncomingMessage|Http2ServerRequest, behindProxy = false): string {
   // for security reasons, we should never ASSUME the server is behind a proxy
   // and only support `x-forwarded-for` is explicitly enabled
-  const xffHeader = behindProxy && req.headers['x-forwarded-for'] as string|undefined;
-  const forwardedFor: string = xffHeader && xffHeader.split(',')[0].trim();
+  const xffHeader = behindProxy ? req.headers['x-forwarded-for'] : undefined;
+  const xffValue = Array.isArray(xffHeader) ? xffHeader[0] : xffHeader;
+  const forwardedFor = typeof xffValue === 'string' ? xffValue.split(',')[0].trim() : undefined;
   return forwardedFor ||
     req?.socket?.remoteAddress ||
     'unknown'
