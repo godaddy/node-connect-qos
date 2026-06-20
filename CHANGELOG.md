@@ -1,3 +1,7 @@
+## 5.6.0
+
+- **Feature** Add support for subnet blocking
+
 ## 5.5.1
 
 - **Fix** Rely exclusively on `socket.destroySoon` for consistency across H1/H2
