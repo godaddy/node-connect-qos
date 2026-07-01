@@ -219,15 +219,16 @@ export class ClusterSync {
     hostDeltas: Map<string, number>,
     totalDelta: number
   ): void {
-    for (const [key, count] of ipDeltas) {
-      this.#ipDeltas.set(key, (this.#ipDeltas.get(key) || 0) + count);
-    }
-    for (const [key, count] of subnetDeltas) {
-      this.#subnetDeltas.set(key, (this.#subnetDeltas.get(key) || 0) + count);
-    }
-    for (const [key, count] of hostDeltas) {
-      this.#hostDeltas.set(key, (this.#hostDeltas.get(key) || 0) + count);
-    }
+    const merge = (dest: Map<string, number>, src: Map<string, number>) => {
+      for (const [key, count] of src) {
+        if (dest.size < this.#maxTrackedActors || dest.has(key)) {
+          dest.set(key, (dest.get(key) || 0) + count);
+        }
+      }
+    };
+    merge(this.#ipDeltas, ipDeltas);
+    merge(this.#subnetDeltas, subnetDeltas);
+    merge(this.#hostDeltas, hostDeltas);
     this.#totalDelta += totalDelta;
   }
 
