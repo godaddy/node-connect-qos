@@ -13,19 +13,33 @@ const describeIfRedis = REDIS_URL ? describe : describe.skip;
 describeIfRedis('cluster integration (requires Redis)', () => {
   let Redis: any;
   let redisClient: any;
+  let redisReady = false;
 
   beforeAll(async () => {
     Redis = require('ioredis');
-    redisClient = new Redis(REDIS_URL);
+    redisClient = new Redis(REDIS_URL, {
+      lazyConnect: true,
+      connectTimeout: 2000,
+      maxRetriesPerRequest: 0,
+      retryStrategy: () => null, // fail immediately instead of retrying
+    });
+    try {
+      await redisClient.connect();
+      redisReady = true;
+    } catch {
+      redisClient.disconnect();
+      throw new Error(`Redis not reachable at ${REDIS_URL} — start Redis to run integration tests`);
+    }
     // Clean up any leftover keys
     const keys = await redisClient.keys('qos:test:*');
     if (keys.length) await redisClient.del(...keys);
-  });
+  }, 5000);
 
   afterAll(async () => {
+    if (!redisReady || !redisClient) return;
     const keys = await redisClient.keys('qos:test:*');
     if (keys.length) await redisClient.del(...keys);
-    await redisClient.quit();
+    await redisClient.quit().catch(() => {});
   });
 
   it('two nodes detect a distributed attacker via shared counts', async () => {
