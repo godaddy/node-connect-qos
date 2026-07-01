@@ -176,8 +176,8 @@ process.on('SIGTERM', () => qos.destroy());
 | `clusterMaxIpRate` | `0` (disabled) | Cluster-wide IP rate limit (req/s); 0 disables |
 | `clusterMaxSubnetRate` | `0` (disabled) | Cluster-wide /24 subnet rate limit (req/s) |
 | `clusterMaxHostRatio` | `0` (disabled) | Block host if it exceeds this fraction of total cluster traffic |
-| `clusterMaxIpRateHostViolation` | `0` (disabled) | Per-IP rate limit when the target host has a cluster violation |
-| `clusterMaxSubnetRateHostViolation` | `0` (disabled) | Per-subnet rate limit when the target host has a cluster violation |
+| `clusterMaxIpRateHostViolation` | `0` (disabled) | Per-IP rate limit when the target host has a cluster violation. **Requires local IP tracking to be enabled** (`minIpRate > 0`); enforced via local `Metrics` history, so it has no effect when local tracking is disabled. |
+| `clusterMaxSubnetRateHostViolation` | `0` (disabled) | Per-subnet rate limit when the target host has a cluster violation. **Requires local subnet tracking to be enabled** (`minSubnetRate > 0`); same constraint as above. |
 | `onSync` | — | Callback after each sync cycle; receives `ClusterSyncStats` |
 | `onError` | — | Callback on Redis sync errors (non-fatal; node continues operating) |
 
