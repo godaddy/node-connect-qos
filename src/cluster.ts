@@ -61,9 +61,10 @@ export class ClusterSync {
   constructor(opts: ClusterSyncOptions) {
     this.#redis = opts.redis.client;
     this.#keyPrefix = opts.redis.keyPrefix || DEFAULT_KEY_PREFIX;
-    this.#windowMs = opts.windowMs;
-    this.#syncIntervalMs = opts.syncIntervalMs || DEFAULT_SYNC_INTERVAL_MS;
-    this.#maxTrackedActors = opts.maxTrackedActors || DEFAULT_MAX_TRACKED_ACTORS;
+    // Guard against 0/negative/NaN values that would break window math (division by zero, NaN keys).
+    this.#windowMs = opts.windowMs > 0 ? opts.windowMs : 10000;
+    this.#syncIntervalMs = (opts.syncIntervalMs ?? 0) > 0 ? opts.syncIntervalMs! : DEFAULT_SYNC_INTERVAL_MS;
+    this.#maxTrackedActors = (opts.maxTrackedActors ?? 0) > 0 ? opts.maxTrackedActors! : DEFAULT_MAX_TRACKED_ACTORS;
     this.#clusterMaxIpRate = opts.clusterMaxIpRate || 0;
     this.#clusterMaxSubnetRate = opts.clusterMaxSubnetRate || 0;
     this.#clusterMaxHostRatio = opts.clusterMaxHostRatio || 0;
@@ -179,8 +180,13 @@ export class ClusterSync {
     this.#totalDelta = 0;
     const hostDeltas = this.getAndResetDeltas('host');
 
+    let publishSucceeded = false;
     try {
       await this.#publishDeltas(ipDeltas, subnetDeltas, hostDeltas, totalDelta);
+      publishSucceeded = true;
+
+      if (!this.#running) return; // stop() was called during publish — skip remaining work
+
       await this.#readThresholds();
       this.#cleanupOldWindows();
       this.#onSync?.({
@@ -191,9 +197,11 @@ export class ClusterSync {
         publishedDeltas: { ip: ipDeltas.size, subnet: subnetDeltas.size, host: hostDeltas.size },
       });
     } catch (err) {
-      // Merge deltas back so they're retried on the next sync cycle
-      // rather than being silently lost on transient Redis failures.
-      this.#mergeDeltasBack(ipDeltas, subnetDeltas, hostDeltas, totalDelta);
+      if (!publishSucceeded) {
+        // Only re-queue deltas when publish failed. If publish succeeded but a later step
+        // (readThresholds, onSync) threw, re-queuing would double-count on the next cycle.
+        this.#mergeDeltasBack(ipDeltas, subnetDeltas, hostDeltas, totalDelta);
+      }
       this.#onError?.(err as Error);
     } finally {
       this.#syncing = false;
