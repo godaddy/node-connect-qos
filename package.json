@@ -9,6 +9,7 @@
     "build": "npx rimraf ./lib && swc src/* --strip-leading-paths --out-dir lib",
     "prepublish": "npm run build",
     "test": "jest",
+    "test:integration": "REDIS_URL=redis://localhost:6379 jest test/integration.test.ts --testTimeout=10000",
     "watch": "swc src --out-dir lib -w"
   },
   "files": [
