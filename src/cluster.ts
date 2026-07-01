@@ -232,10 +232,7 @@ export class ClusterSync {
     hostDeltas: Map<string, number>,
     totalDelta: number
   ): Promise<void> {
-    const window = this.#currentWindow();
-
-    if (ipDeltas.size === 0 && subnetDeltas.size === 0 && hostDeltas.size === 0) return;
-
+    if (ipDeltas.size === 0 && subnetDeltas.size === 0 && hostDeltas.size === 0 && totalDelta === 0) return;
     const pipe = this.#redis.pipeline();
 
     for (const [key, count] of ipDeltas) {
