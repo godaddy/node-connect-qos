@@ -124,6 +124,80 @@ For you tweakers out there, here's some levers to pull:
   if this option is set to `true`.
 
 
+## Cluster-Wide Rate Limiting
+
+`connect-qos` supports cluster-wide rate limiting via Redis for multi-node deployments behind a load balancer. Without cluster mode, each node tracks request rates independently, so a distributed attacker spreading requests across nodes evades per-node limits. With cluster mode enabled, all nodes share counts via a dedicated Redis/Valkey instance.
+
+### Enabling Cluster Mode
+
+```js
+const Redis = require('ioredis');
+const { ConnectQOS } = require('connect-qos');
+
+const redisClient = new Redis.Cluster([{ host: 'redis.example.com', port: 6379 }]);
+
+const qos = new ConnectQOS({
+  minIpRate: 8,
+  maxIpRate: 15,
+  maxAge: 10000,
+  cluster: {
+    redis: { client: redisClient, keyPrefix: 'qos:' },
+    syncIntervalMs: 2000,
+    maxTrackedActors: 50000,
+    clusterMaxIpRate: 50,
+    clusterMaxSubnetRate: 200,
+    clusterMaxHostRatio: 0.20,
+    clusterMaxIpRateHostViolation: 10,
+    clusterMaxSubnetRateHostViolation: 30,
+    onSync: (stats) => console.log('Cluster sync:', stats),
+    onError: (err) => console.error('Cluster sync error', err.message),
+  }
+});
+
+process.on('SIGTERM', () => qos.destroy());
+```
+
+### How It Works
+
+- **Zero hot-path latency**: all throttle decisions use in-process state; Redis is never on the request path
+- **Background sync**: every `syncIntervalMs`, accumulated per-actor hit deltas are published to Redis sorted sets and cluster-wide counts are read back
+- **Sliding window**: rate is computed from the current + previous time buckets to avoid boundary spikes
+- **Graceful degradation**: if Redis is unavailable, the previous blocklist remains active; the node falls back to per-node limiting until the next successful sync
+- **Delta retry**: if publishing to Redis fails, deltas are merged back into the local accumulator for the next cycle — no counts are lost
+
+### Cluster Options
+
+| Option | Default | Description |
+|---|---|---|
+| `redis.client` | required | ioredis client instance (pass `null` to disable cluster sync) |
+| `redis.keyPrefix` | `'qos:'` | Key prefix for all cluster Redis keys |
+| `syncIntervalMs` | `2000` | How often to sync with Redis (ms) |
+| `maxTrackedActors` | `50000` | Max actors per sorted set (oldest trimmed when exceeded) |
+| `clusterMaxIpRate` | `0` (disabled) | Cluster-wide IP rate limit (req/s); 0 disables |
+| `clusterMaxSubnetRate` | `0` (disabled) | Cluster-wide /24 subnet rate limit (req/s) |
+| `clusterMaxHostRatio` | `0` (disabled) | Block host if it exceeds this fraction of total cluster traffic |
+| `clusterMaxIpRateHostViolation` | `0` (disabled) | Per-IP rate limit when the target host has a cluster violation |
+| `clusterMaxSubnetRateHostViolation` | `0` (disabled) | Per-subnet rate limit when the target host has a cluster violation |
+| `onSync` | — | Callback after each sync cycle; receives `ClusterSyncStats` |
+| `onError` | — | Callback on Redis sync errors (non-fatal; node continues operating) |
+
+### Redis Eviction Safety
+
+QOS sorted-set keys have no TTL. Use a dedicated Redis/Valkey instance with `maxmemory-policy volatile-lru` so only keys with TTLs are evicted. Under `volatile-lru`, QOS keys are never evicted regardless of memory pressure.
+
+### Lifecycle
+
+Call `qos.destroy()` to stop the background sync interval. The interval is created with `.unref()` so it will not prevent the Node.js process from exiting, but explicit cleanup is still recommended for clean shutdown.
+
+### Disabling Cluster Sync at Runtime
+
+To disable cluster sync via a config merge (e.g. Switchboard), push `{ cluster: null }`. Using `undefined` is silently ignored by `lodash.mergeWith` — only `null` forces the key to falsy and disables sync.
+
+### `onError` Callback
+
+`onError` fires on both sync failures (publish/read pipeline errors) and background cleanup errors. These are non-fatal; the node continues operating with its previous blocklist. Log all `onError` calls at `warn` level.
+
+
 ## Performance
 
 With quality of service being the entire purpose of this library needless to say
