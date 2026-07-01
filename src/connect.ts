@@ -62,10 +62,14 @@ export class ConnectQOS {
     // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
     // toobusy.maxLag(this.#maxLag);
 
+    const userOnTrack = metricOptions.onTrack;
     this.#metrics = new Metrics({
       ...metricOptions,
-      onTrack: this.#clusterSync
-        ? (type, key) => this.#clusterSync!.recordHit(type, key)
+      onTrack: (this.#clusterSync || userOnTrack)
+        ? (type, key) => {
+          this.#clusterSync?.recordHit(type, key);
+          userOnTrack?.(type, key);
+        }
         : undefined,
     });
     this.#hostRateRange = this.#metrics.maxHostRate - this.#metrics.minHostRate;

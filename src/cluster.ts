@@ -60,16 +60,16 @@ export class ClusterSync {
 
   constructor(opts: ClusterSyncOptions) {
     this.#redis = opts.redis.client;
-    this.#keyPrefix = opts.redis.keyPrefix || DEFAULT_KEY_PREFIX;
+    this.#keyPrefix = opts.redis.keyPrefix ?? DEFAULT_KEY_PREFIX;
     // Guard against 0/negative/NaN values that would break window math (division by zero, NaN keys).
     this.#windowMs = opts.windowMs > 0 ? opts.windowMs : 10000;
     this.#syncIntervalMs = (opts.syncIntervalMs ?? 0) > 0 ? opts.syncIntervalMs! : DEFAULT_SYNC_INTERVAL_MS;
     this.#maxTrackedActors = (opts.maxTrackedActors ?? 0) > 0 ? opts.maxTrackedActors! : DEFAULT_MAX_TRACKED_ACTORS;
-    this.#clusterMaxIpRate = opts.clusterMaxIpRate || 0;
-    this.#clusterMaxSubnetRate = opts.clusterMaxSubnetRate || 0;
-    this.#clusterMaxHostRatio = opts.clusterMaxHostRatio || 0;
-    this.#clusterMaxIpRateHostViolation = opts.clusterMaxIpRateHostViolation || 0;
-    this.#clusterMaxSubnetRateHostViolation = opts.clusterMaxSubnetRateHostViolation || 0;
+    this.#clusterMaxIpRate = Math.max(0, opts.clusterMaxIpRate || 0);
+    this.#clusterMaxSubnetRate = Math.max(0, opts.clusterMaxSubnetRate || 0);
+    this.#clusterMaxHostRatio = Math.max(0, opts.clusterMaxHostRatio || 0);
+    this.#clusterMaxIpRateHostViolation = Math.max(0, opts.clusterMaxIpRateHostViolation || 0);
+    this.#clusterMaxSubnetRateHostViolation = Math.max(0, opts.clusterMaxSubnetRateHostViolation || 0);
     this.#onSync = opts.onSync;
     this.#onError = opts.onError;
   }
