@@ -320,13 +320,17 @@ export class ClusterSync {
     if (this.#clusterMaxHostRatio > 0) {
       pipe.get(this.#totalKey(win));
       pipe.get(this.#totalKey(prevWindow));
-      const minHostCount = Math.max(1, Math.ceil(this.#clusterMaxHostRatio * 0.5 * (this.#windowMs / 1000)));
-      pipe.zrangebyscore(this.#windowKey('host', win), minHostCount, '+inf', 'WITHSCORES');
-      pipe.zrangebyscore(this.#windowKey('host', prevWindow), minHostCount, '+inf', 'WITHSCORES');
+      // Fetch all hosts with at least one hit. A time-based floor (ratio * windowMs) causes
+      // false negatives at low traffic volumes: a host with 1 hit out of 2 total (50%) would
+      // be filtered when minHostCount > 1. The ratio check below uses actual fetched totals,
+      // so the floor just needs to exclude zero-hit entries.
+      pipe.zrangebyscore(this.#windowKey('host', win), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('host', prevWindow), 1, '+inf', 'WITHSCORES');
     }
 
     const results = await pipe.exec();
-    if (!results || results.length === 0) return;
+    if (!results) throw new Error('Redis pipeline exec returned null');
+    if (results.length === 0) return;
 
     const firstError = results.find(([err]: [Error | null, any]) => err)?.[0];
     if (firstError) throw firstError;
