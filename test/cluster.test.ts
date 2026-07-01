@@ -302,6 +302,26 @@ describe('ClusterSync', () => {
       expect(onSync.mock.calls[0][0].syncDurationMs).toBeGreaterThanOrEqual(0);
     });
 
+    it('treats null exec result as a pipeline error and merges deltas back', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue(null); // ioredis can return null
+      const onError = jest.fn();
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+        onError,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      await sync.sync();
+
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('null') }));
+      const retryDeltas = sync.getAndResetDeltas('ip');
+      expect(retryDeltas.get('1.2.3.4')).toBe(1);
+    });
+
     it('does not publish if no deltas accumulated', async () => {
       const redis = createMockRedis();
       const sync = new ClusterSync({

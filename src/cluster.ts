@@ -281,7 +281,8 @@ export class ClusterSync {
     if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', win), 0, trimIndex);
 
     const results = await pipe.exec();
-    const firstError = results?.find(([err]: [Error | null, any]) => err)?.[0];
+    if (!results) throw new Error('Redis pipeline exec returned null');
+    const firstError = results.find(([err]: [Error | null, any]) => err)?.[0];
     if (firstError) throw firstError;
   }
 
@@ -302,15 +303,19 @@ export class ClusterSync {
       ? Math.ceil(this.#clusterMaxSubnetRate * (this.#windowMs / 1000))
       : 0;
 
-    // Fetch all actors with at least one hit in each window so the sliding window
-    // computation can correctly handle actors that straddle a window boundary.
+    // Use threshold/2 as the minimum score for each window query. This is safe: if an actor
+    // scores below threshold/2 in BOTH windows, its sliding value (current + prev*prevWeight)
+    // is at most threshold/2 + threshold/2 = threshold, so it can never exceed the threshold.
+    // Any actor that could actually be blocked appears in at least one window above this floor.
     if (ipThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('ip', win), 1, '+inf', 'WITHSCORES');
-      pipe.zrangebyscore(this.#windowKey('ip', prevWindow), 1, '+inf', 'WITHSCORES');
+      const ipMinScore = Math.max(1, Math.floor(ipThreshold / 2));
+      pipe.zrangebyscore(this.#windowKey('ip', win), ipMinScore, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('ip', prevWindow), ipMinScore, '+inf', 'WITHSCORES');
     }
     if (subnetThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('subnet', win), 1, '+inf', 'WITHSCORES');
-      pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), 1, '+inf', 'WITHSCORES');
+      const subnetMinScore = Math.max(1, Math.floor(subnetThreshold / 2));
+      pipe.zrangebyscore(this.#windowKey('subnet', win), subnetMinScore, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), subnetMinScore, '+inf', 'WITHSCORES');
     }
     if (this.#clusterMaxHostRatio > 0) {
       pipe.get(this.#totalKey(win));

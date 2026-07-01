@@ -385,6 +385,26 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(false); // won't block even if bad IP since goodhost.com is whitelisted
   });
 
+  it('whitelisted host/IP still exempt when local tracking is disabled (minHostRate/minIpRate=0)', () => {
+    // When minHostRate=0, Metrics.getInfo returns Good (not Whitelisted) because minRequests=0
+    // short-circuits before the whitelist check. The guard must check whitelist sets directly.
+    const qos = new ConnectQOS({
+      maxAge: 1000,
+      minHostRate: 0, maxHostRate: 0, // host tracking disabled
+      minIpRate: 0, maxIpRate: 0,     // ip tracking disabled
+      hostWhitelist: new Set(['goodhost.com']),
+      ipWhitelist: new Set(['1.2.3.4']),
+    });
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodhost.com' },
+      socket: { remoteAddress: '9.9.9.9' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badhost.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+  });
+
   it('if host monitoring disabled should still be able to throttle IPs', () => {
     const qos = new ConnectQOS({ maxAge: 1000, minIpRate: 1, maxIpRate: 1, minHostRate: 0 });
     expect(qos.shouldThrottleRequest({

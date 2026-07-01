@@ -159,8 +159,10 @@ export class ConnectQOS {
     const ipStatus = this.getIpStatus(ip, false); // defer tracking
     const subnetStatus = this.getSubnetStatus(subnet, false); // defer tracking
 
-    // never throttle whitelisted actors
-    if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
+    // never throttle whitelisted actors — check sets directly so the guard works even
+    // when local tracking is disabled (minHostRate/minIpRate=0), since getInfo returns
+    // Good (not Whitelisted) when minRequests=0, bypassing the whitelist check in Metrics.
+    if (this.#metrics.hostWhitelist.has(host) || this.#metrics.ipWhitelist.has(ip)) return false;
 
     if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
 
