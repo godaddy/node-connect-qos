@@ -385,6 +385,26 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(false); // won't block even if bad IP since goodhost.com is whitelisted
   });
 
+  it('whitelisted host/IP still exempt when local tracking is disabled (minHostRate/minIpRate=0)', () => {
+    // When minHostRate=0, Metrics.getInfo returns Good (not Whitelisted) because minRequests=0
+    // short-circuits before the whitelist check. The guard must check whitelist sets directly.
+    const qos = new ConnectQOS({
+      maxAge: 1000,
+      minHostRate: 0, maxHostRate: 0, // host tracking disabled
+      minIpRate: 0, maxIpRate: 0,     // ip tracking disabled
+      hostWhitelist: new Set(['goodhost.com']),
+      ipWhitelist: new Set(['1.2.3.4']),
+    });
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'goodhost.com' },
+      socket: { remoteAddress: '9.9.9.9' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'badhost.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+  });
+
   it('if host monitoring disabled should still be able to throttle IPs', () => {
     const qos = new ConnectQOS({ maxAge: 1000, minIpRate: 1, maxIpRate: 1, minHostRate: 0 });
     expect(qos.shouldThrottleRequest({
@@ -571,6 +591,188 @@ describe('shouldThrottleRequest', () => {
       headers: { host: 'a' },
       socket: { remoteAddress: '1.2.3.4' }
     } as IncomingMessage)).toEqual(BadActorType.hostViolation);
+  });
+});
+
+describe('cluster integration', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('shouldThrottleRequest returns badIp when cluster blocks the IP', () => {
+    const mockRedisClient = {
+      pipeline: jest.fn().mockReturnValue({
+        zincrby: jest.fn().mockReturnThis(),
+        zrangebyscore: jest.fn().mockReturnThis(),
+        zremrangebyrank: jest.fn().mockReturnThis(),
+        incrby: jest.fn().mockReturnThis(),
+        get: jest.fn().mockReturnThis(),
+        unlink: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    };
+    const qos = new ConnectQOS({
+      minIpRate: 0, // disable local IP limiting
+      maxAge: 1000,
+      cluster: {
+        redis: { client: mockRedisClient },
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 50,
+      },
+    });
+
+    // Manually inject a blocked IP into the cluster sync's blocklist
+    qos.clusterSync!.blockedIps.add('1.2.3.4');
+
+    const result = qos.shouldThrottleRequest({
+      headers: { host: 'example.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage);
+
+    expect(result).toEqual(BadActorType.badIp);
+    qos.destroy();
+  });
+
+  it('shouldThrottleRequest returns badSubnet when cluster blocks the subnet', () => {
+    const mockRedisClient = {
+      pipeline: jest.fn().mockReturnValue({
+        zincrby: jest.fn().mockReturnThis(),
+        zrangebyscore: jest.fn().mockReturnThis(),
+        zremrangebyrank: jest.fn().mockReturnThis(),
+        incrby: jest.fn().mockReturnThis(),
+        get: jest.fn().mockReturnThis(),
+        unlink: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    };
+    const qos = new ConnectQOS({
+      minSubnetRate: 0, // disable local subnet limiting
+      maxAge: 1000,
+      cluster: {
+        redis: { client: mockRedisClient },
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 200,
+      },
+    });
+
+    qos.clusterSync!.blockedSubnets.add('1.2.3.0');
+
+    const result = qos.shouldThrottleRequest({
+      headers: { host: 'example.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage);
+
+    expect(result).toEqual(BadActorType.badSubnet);
+    qos.destroy();
+  });
+
+  it('shouldThrottleRequest returns hostViolation when cluster detects host ratio violation', () => {
+    const mockRedisClient = {
+      pipeline: jest.fn().mockReturnValue({
+        zincrby: jest.fn().mockReturnThis(),
+        zrangebyscore: jest.fn().mockReturnThis(),
+        zremrangebyrank: jest.fn().mockReturnThis(),
+        incrby: jest.fn().mockReturnThis(),
+        get: jest.fn().mockReturnThis(),
+        unlink: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    };
+    const qos = new ConnectQOS({
+      minIpRate: 1,
+      maxIpRate: 1,
+      maxAge: 1000,
+      cluster: {
+        redis: { client: mockRedisClient },
+        syncIntervalMs: 2000,
+        clusterMaxHostRatio: 0.15,
+        clusterMaxIpRateHostViolation: 1,
+      },
+    });
+
+    qos.clusterSync!.hostViolations.add('attacked.com');
+
+    // First request: tracks the IP (history = 1)
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'attacked.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+
+    // Second request: IP rate exceeds clusterMaxIpRateHostViolation threshold
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'attacked.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(BadActorType.hostViolation);
+
+    qos.destroy();
+  });
+
+  it('whitelisted IPs are never cluster-blocked', () => {
+    const mockRedisClient = {
+      pipeline: jest.fn().mockReturnValue({
+        zincrby: jest.fn().mockReturnThis(),
+        zrangebyscore: jest.fn().mockReturnThis(),
+        zremrangebyrank: jest.fn().mockReturnThis(),
+        incrby: jest.fn().mockReturnThis(),
+        get: jest.fn().mockReturnThis(),
+        unlink: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    };
+    const qos = new ConnectQOS({
+      maxAge: 1000,
+      ipWhitelist: new Set(['1.2.3.4']),
+      cluster: {
+        redis: { client: mockRedisClient },
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 50,
+      },
+    });
+
+    qos.clusterSync!.blockedIps.add('1.2.3.4');
+
+    const result = qos.shouldThrottleRequest({
+      headers: { host: 'example.com' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage);
+
+    expect(result).toEqual(false);
+    qos.destroy();
+  });
+
+  it('no cluster sync created when cluster option is not provided', () => {
+    const qos = new ConnectQOS({ maxAge: 1000 });
+    expect(qos.clusterSync).toBeUndefined();
+  });
+
+  it('destroy() stops the cluster sync', () => {
+    const mockRedisClient = {
+      pipeline: jest.fn().mockReturnValue({
+        zincrby: jest.fn().mockReturnThis(),
+        zrangebyscore: jest.fn().mockReturnThis(),
+        zremrangebyrank: jest.fn().mockReturnThis(),
+        incrby: jest.fn().mockReturnThis(),
+        get: jest.fn().mockReturnThis(),
+        unlink: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    };
+    const qos = new ConnectQOS({
+      maxAge: 1000,
+      cluster: {
+        redis: { client: mockRedisClient },
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 50,
+      },
+    });
+
+    expect(qos.clusterSync!.isRunning).toBe(true);
+    qos.destroy();
+    expect(qos.clusterSync!.isRunning).toBe(false);
   });
 });
 

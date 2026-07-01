@@ -276,6 +276,41 @@ describe('resolveSubnetFromIp', () => {
   });
 });
 
+describe('onTrack callback', () => {
+  it('fires onTrack with type and key on each trackIp call', () => {
+    const onTrack = jest.fn();
+    const metrics = new Metrics({ minIpRate: 1, maxIpRate: 10, onTrack });
+    metrics.trackIp('1.2.3.4');
+    expect(onTrack).toHaveBeenCalledWith('ip', '1.2.3.4');
+  });
+
+  it('fires onTrack with type and key on each trackSubnet call', () => {
+    const onTrack = jest.fn();
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 10, onTrack });
+    metrics.trackSubnet('1.2.3.0');
+    expect(onTrack).toHaveBeenCalledWith('subnet', '1.2.3.0');
+  });
+
+  it('fires onTrack with type and key on each trackHost call', () => {
+    const onTrack = jest.fn();
+    const metrics = new Metrics({ minHostRate: 1, maxHostRate: 10, onTrack });
+    metrics.trackHost('example.com');
+    expect(onTrack).toHaveBeenCalledWith('host', 'example.com');
+  });
+
+  it('does not fire onTrack for whitelisted actors', () => {
+    const onTrack = jest.fn();
+    const metrics = new Metrics({ minIpRate: 1, maxIpRate: 10, ipWhitelist: new Set(['1.2.3.4']), onTrack });
+    metrics.trackIp('1.2.3.4');
+    expect(onTrack).not.toHaveBeenCalled();
+  });
+
+  it('does not throw if onTrack is not provided', () => {
+    const metrics = new Metrics({ minIpRate: 1, maxIpRate: 10 });
+    expect(() => metrics.trackIp('1.2.3.4')).not.toThrow();
+  });
+});
+
 describe('getSubnetInfo', () => {
   it('returns Good if rate limiting disabled', () => {
     const metrics = new Metrics({ minSubnetRate: 0 });

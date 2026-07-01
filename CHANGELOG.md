@@ -1,3 +1,10 @@
+## 5.7.0
+
+- **Feature** Add cluster-wide rate limiting via shared Redis/Valkey sorted sets (`ClusterSync`)
+- **Feature** Add `onTrack` callback to `Metrics` for cross-cutting visibility into per-request actor tracking
+- **Feature** Export `ClusterSync`, `ClusterSyncOptions`, `ClusterSyncStats`, `ClusterRedisOptions`, `ActorType` from package index
+- **Dependency** `ioredis >=5.0.0` added as an optional peer dependency (only required when using cluster mode)
+
 ## 5.6.0
 
 - **Feature** Add support for subnet blocking

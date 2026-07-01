@@ -3,6 +3,7 @@ import { Metrics, MetricsOptions, ActorStatus, BadActorType, CacheItem } from '.
 import { IncomingMessage, ServerResponse } from 'http';
 import { Http2ServerRequest, Http2ServerResponse } from 'http2';
 import { normalizeHost, resolveHostFromRequest, resolveIpFromRequest, resolveSubnetFromIp, SubnetMaskBits } from './util';
+import { ClusterSync, ClusterSyncOptions } from './cluster';
 
 export type ConnectQOSMiddleware = (req: IncomingMessage|Http2ServerRequest, res: object, next: Function) => boolean;
 export type BeforeThrottleFn = (qos: ConnectQOS, req: IncomingMessage|Http2ServerRequest, reason: string) => boolean|undefined;
@@ -19,6 +20,7 @@ export interface ConnectQOSOptions extends MetricsOptions {
   httpBehindProxy?: boolean;
   httpsBehindProxy?: boolean;
   subnetMaskBits?: SubnetMaskBits;
+  cluster?: Omit<ClusterSyncOptions, 'windowMs'>;
 }
 
 export const DEFAULT_SUBNET_MASK_BITS: SubnetMaskBits = 24;
@@ -33,6 +35,7 @@ export class ConnectQOS {
       httpBehindProxy = false, // must be explicit to enable
       httpsBehindProxy = false, // must be explicit to enable
       subnetMaskBits = DEFAULT_SUBNET_MASK_BITS,
+      cluster,
       ...metricOptions
     } = (opts || {} as ConnectQOSOptions);
 
@@ -48,10 +51,27 @@ export class ConnectQOS {
     this.#errorResponseDelay = errorResponseDelay;
     this.#subnetMaskBits = subnetMaskBits;
 
+    if (cluster) {
+      this.#clusterSync = new ClusterSync({
+        ...cluster,
+        windowMs: metricOptions.maxAge ?? 10000,
+      });
+      this.#clusterSync.start();
+    }
+
     // we only require `toobusy.lag` feature and can ignore toobusy() via maxLag
     // toobusy.maxLag(this.#maxLag);
 
-    this.#metrics = new Metrics(metricOptions);
+    const userOnTrack = metricOptions.onTrack;
+    this.#metrics = new Metrics({
+      ...metricOptions,
+      onTrack: (this.#clusterSync || userOnTrack)
+        ? (type, key) => {
+          this.#clusterSync?.recordHit(type, key);
+          userOnTrack?.(type, key);
+        }
+        : undefined,
+    });
     this.#hostRateRange = this.#metrics.maxHostRate - this.#metrics.minHostRate;
     this.#ipRateRange = this.#metrics.maxIpRate - this.#metrics.minIpRate;
     this.#subnetRateRange = this.#metrics.maxSubnetRate - this.#metrics.minSubnetRate;
@@ -69,6 +89,7 @@ export class ConnectQOS {
   #httpsBehindProxy: boolean;
   #errorResponseDelay: number;
   #metrics: Metrics;
+  #clusterSync?: ClusterSync;
 
   get minLag(): number {
     return this.#minLag;
@@ -92,6 +113,14 @@ export class ConnectQOS {
 
   get metrics(): Metrics {
     return this.#metrics;
+  }
+
+  get clusterSync(): ClusterSync | undefined {
+    return this.#clusterSync;
+  }
+
+  destroy(): void {
+    this.#clusterSync?.stop();
   }
 
   getMiddleware({ beforeThrottle, destroySocket = true }: GetMiddlewareOptions = {}) {
@@ -124,18 +153,55 @@ export class ConnectQOS {
 
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
     const host = this.resolveHost(req);
+    const ip = this.resolveIp(req);
+    const subnet = resolveSubnetFromIp(ip, this.#subnetMaskBits);
     const hostStatus = this.getHostStatus(host, false); // defer tracking
-    const ipStatus = this.getIpStatus(req, false); // defer tracking
-    const subnetStatus = this.getSubnetStatus(req, false); // defer tracking
+    const ipStatus = this.getIpStatus(ip, false); // defer tracking
+    const subnetStatus = this.getSubnetStatus(subnet, false); // defer tracking
 
-    // never throttle whitelisted actors
-    if (hostStatus === ActorStatus.Whitelisted || ipStatus === ActorStatus.Whitelisted) return false;
+    // never throttle whitelisted actors — check sets directly so the guard works even
+    // when local tracking is disabled (minHostRate/minIpRate=0), since getInfo returns
+    // Good (not Whitelisted) when minRequests=0, bypassing the whitelist check in Metrics.
+    if (this.#metrics.hostWhitelist.has(host) || this.#metrics.ipWhitelist.has(ip)) return false;
 
     if (hostStatus === ActorStatus.Bad) return BadActorType.badHost;
+
+    // Cluster-wide host ratio violations (checked before local IP/subnet to return hostViolation
+    // even when local IP rate limits are also exceeded)
+    if (this.#clusterSync?.isHostViolation(host)) {
+      const clusterMaxIpRateHostViolation = this.#clusterSync.clusterMaxIpRateHostViolation;
+      const clusterMaxSubnetRateHostViolation = this.#clusterSync.clusterMaxSubnetRateHostViolation;
+
+      if (!clusterMaxIpRateHostViolation && !clusterMaxSubnetRateHostViolation) {
+        return BadActorType.hostViolation;
+      }
+
+      if (clusterMaxIpRateHostViolation) {
+        const violationMin = Math.min(clusterMaxIpRateHostViolation, this.#metrics.minIpRate);
+        const violationRange = Math.max(0, clusterMaxIpRateHostViolation - violationMin);
+        if (this.getIpStatus(ip, false, violationRange, violationMin) === ActorStatus.Bad) {
+          return BadActorType.hostViolation;
+        }
+      }
+
+      if (clusterMaxSubnetRateHostViolation) {
+        const subnetViolationMin = Math.min(clusterMaxSubnetRateHostViolation, this.#metrics.minSubnetRate);
+        const subnetViolationRange = Math.max(0, clusterMaxSubnetRateHostViolation - subnetViolationMin);
+        if (this.getSubnetStatus(subnet, false, subnetViolationRange, subnetViolationMin) === ActorStatus.Bad) {
+          return BadActorType.hostViolation;
+        }
+      }
+    }
 
     if (ipStatus === ActorStatus.Bad) return BadActorType.badIp;
 
     if (subnetStatus === ActorStatus.Bad) return BadActorType.badSubnet;
+
+    // Cluster-wide checks (async-populated blocklists)
+    if (this.#clusterSync) {
+      if (!this.#metrics.ipWhitelist.has(ip) && this.#clusterSync.isBlocked('ip', ip)) return BadActorType.badIp;
+      if (!this.#metrics.subnetWhitelist.has(subnet) && this.#clusterSync.isBlocked('subnet', subnet)) return BadActorType.badSubnet;
+    }
 
     // If host is exceeding host ratio, apply per-actor rate overrides if configured
     if (this.metrics.hostRatioViolations.has(host)) {
@@ -151,7 +217,7 @@ export class ConnectQOS {
       if (maxIpRateHostViolation) {
         const violationMin = Math.min(maxIpRateHostViolation, this.#metrics.minIpRate);
         const violationRange = Math.max(0, maxIpRateHostViolation - violationMin);
-        if (this.getIpStatus(req, false, violationRange, violationMin) === ActorStatus.Bad) {
+        if (this.getIpStatus(ip, false, violationRange, violationMin) === ActorStatus.Bad) {
           return BadActorType.hostViolation;
         }
       }
@@ -160,7 +226,7 @@ export class ConnectQOS {
       if (maxSubnetRateHostViolation) {
         const subnetViolationMin = Math.min(maxSubnetRateHostViolation, this.#metrics.minSubnetRate);
         const subnetViolationRange = Math.max(0, maxSubnetRateHostViolation - subnetViolationMin);
-        if (this.getSubnetStatus(req, false, subnetViolationRange, subnetViolationMin) === ActorStatus.Bad) {
+        if (this.getSubnetStatus(subnet, false, subnetViolationRange, subnetViolationMin) === ActorStatus.Bad) {
           return BadActorType.hostViolation;
         }
       }
@@ -279,7 +345,7 @@ export class ConnectQOS {
     this.#metrics.trackHost(host);
     const ip = this.resolveIp(req);
     this.#metrics.trackIp(ip);
-    this.#metrics.trackSubnet(this.resolveSubnet(req));
+    this.#metrics.trackSubnet(resolveSubnetFromIp(ip, this.#subnetMaskBits));
   }
 }
 

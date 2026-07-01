@@ -28,3 +28,10 @@ export {
   GetMiddlewareOptions,
   DEFAULT_SUBNET_MASK_BITS
 } from './connect';
+export {
+  ClusterSync,
+  ClusterSyncOptions,
+  ClusterSyncStats,
+  ClusterRedisOptions,
+  ActorType
+} from './cluster';
