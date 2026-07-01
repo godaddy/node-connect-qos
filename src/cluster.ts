@@ -81,9 +81,9 @@ export class ClusterSync {
   start(): void {
     if (this.#running) return;
     this.#running = true;
-    this.#intervalHandle = setInterval(() => {
+    this.#intervalHandle = setInterval(async () => {
       if (this.#syncing) return; // skip tick if previous sync is still in-flight
-      this.#sync();
+      await this.#sync();
     }, this.#syncIntervalMs);
     this.#intervalHandle.unref();
   }
@@ -95,6 +95,11 @@ export class ClusterSync {
       clearInterval(this.#intervalHandle);
       this.#intervalHandle = null;
     }
+  }
+
+  async sync(): Promise<void> {
+    if (this.#syncing) return;
+    await this.#sync();
   }
 
   recordHit(type: ActorType, key: string): void {
@@ -233,19 +238,20 @@ export class ClusterSync {
     totalDelta: number
   ): Promise<void> {
     if (ipDeltas.size === 0 && subnetDeltas.size === 0 && hostDeltas.size === 0 && totalDelta === 0) return;
+    const win = this.#currentWindow();
     const pipe = this.#redis.pipeline();
 
     for (const [key, count] of ipDeltas) {
-      pipe.zincrby(this.#windowKey('ip', window), count, key);
+      pipe.zincrby(this.#windowKey('ip', win), count, key);
     }
     for (const [key, count] of subnetDeltas) {
-      pipe.zincrby(this.#windowKey('subnet', window), count, key);
+      pipe.zincrby(this.#windowKey('subnet', win), count, key);
     }
     for (const [key, count] of hostDeltas) {
-      pipe.zincrby(this.#windowKey('host', window), count, key);
+      pipe.zincrby(this.#windowKey('host', win), count, key);
     }
     if (totalDelta > 0) {
-      pipe.incrby(this.#totalKey(window), totalDelta);
+      pipe.incrby(this.#totalKey(win), totalDelta);
     }
 
     // Trim sorted sets to maxTrackedActors (keep highest scores = top offenders).
@@ -253,9 +259,9 @@ export class ClusterSync {
     // When the set has fewer than maxTrackedActors entries, ZREMRANGEBYRANK resolves
     // stop to a negative index that underflows past the start and is a no-op per Redis spec.
     const trimIndex = -(this.#maxTrackedActors + 1);
-    if (ipDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('ip', window), 0, trimIndex);
-    if (subnetDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('subnet', window), 0, trimIndex);
-    if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', window), 0, trimIndex);
+    if (ipDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('ip', win), 0, trimIndex);
+    if (subnetDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('subnet', win), 0, trimIndex);
+    if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', win), 0, trimIndex);
 
     const results = await pipe.exec();
     const firstError = results?.find(([err]: [Error | null, any]) => err)?.[0];
@@ -264,8 +270,8 @@ export class ClusterSync {
 
   async #readThresholds(): Promise<void> {
     if (this.#clusterMaxIpRate === 0 && this.#clusterMaxSubnetRate === 0 && this.#clusterMaxHostRatio === 0) return;
-    const window = this.#currentWindow();
-    const prevWindow = window - 1;
+    const win = this.#currentWindow();
+    const prevWindow = win - 1;
     // Sliding window weight: how much of the previous window still counts.
     // At offset=0 (window just started) the full previous window is included;
     // at offset=1 (window about to end) the previous window contributes nothing.
@@ -282,18 +288,18 @@ export class ClusterSync {
     // Fetch all actors with at least one hit in each window so the sliding window
     // computation can correctly handle actors that straddle a window boundary.
     if (ipThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('ip', window), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('ip', win), 1, '+inf', 'WITHSCORES');
       pipe.zrangebyscore(this.#windowKey('ip', prevWindow), 1, '+inf', 'WITHSCORES');
     }
     if (subnetThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('subnet', window), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('subnet', win), 1, '+inf', 'WITHSCORES');
       pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), 1, '+inf', 'WITHSCORES');
     }
     if (this.#clusterMaxHostRatio > 0) {
-      pipe.get(this.#totalKey(window));
+      pipe.get(this.#totalKey(win));
       pipe.get(this.#totalKey(prevWindow));
       const minHostCount = Math.max(1, Math.ceil(this.#clusterMaxHostRatio * 0.5 * (this.#windowMs / 1000)));
-      pipe.zrangebyscore(this.#windowKey('host', window), minHostCount, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('host', win), minHostCount, '+inf', 'WITHSCORES');
       pipe.zrangebyscore(this.#windowKey('host', prevWindow), minHostCount, '+inf', 'WITHSCORES');
     }
 

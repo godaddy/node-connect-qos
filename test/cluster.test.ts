@@ -166,15 +166,6 @@ describe('ClusterSync', () => {
   });
 
   describe('sync cycle', () => {
-    // Override fake timers to leave setImmediate real so promise resolution works
-    beforeEach(() => {
-      jest.useFakeTimers({ doNotFake: ['setImmediate', 'queueMicrotask'] });
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
     it('publishDeltas sends ZINCRBY commands for accumulated IPs', async () => {
       const redis = createMockRedis();
       redis._pipeline.exec.mockResolvedValue([]);
@@ -189,11 +180,7 @@ describe('ClusterSync', () => {
       sync.recordHit('ip', '1.2.3.4');
       sync.recordHit('ip', '5.6.7.8');
 
-      sync.start();
-      jest.advanceTimersByTime(2000);
-
-      // Wait for the async sync to complete
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
 
       expect(redis.pipeline).toHaveBeenCalled();
       expect(redis._pipeline.zincrby).toHaveBeenCalledWith(
@@ -207,13 +194,12 @@ describe('ClusterSync', () => {
         '5.6.7.8'
       );
       expect(redis._pipeline.exec).toHaveBeenCalled();
-      sync.stop();
     });
 
     it('readThresholds populates blockedIps from ZRANGEBYSCORE results', async () => {
-      // Pin time so the interval fires exactly at a window boundary (offset = 0, prevWeight = 1.0).
-      // advanceTimersByTime(2000) brings Date.now() to 10000*100 = 1_000_000, where offset = 0.
-      jest.setSystemTime(new Date(10000 * 100 - 2000)); // 998_000ms
+      // Pin time to a window boundary (offset = 0, prevWeight = 1.0) so the
+      // sliding window weight is deterministic.
+      jest.setSystemTime(new Date(10000 * 100)); // exactly at window boundary
 
       const redis = createMockRedis();
       // threshold = 50 req/s * 10s = 500 hits. Scores of 600 exceed threshold in both windows.
@@ -232,15 +218,13 @@ describe('ClusterSync', () => {
 
       sync.recordHit('ip', 'dummy');
       sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
+      sync.stop();
 
       expect(sync.isBlocked('ip', '1.2.3.4')).toBe(true);
       expect(sync.isBlocked('ip', '5.6.7.8')).toBe(true);
       expect(sync.isBlocked('ip', '9.10.11.12')).toBe(true);
       expect(sync.isBlocked('ip', '99.99.99.99')).toBe(false);
-      sync.stop();
     });
 
     it('host ratio violation detected when host exceeds clusterMaxHostRatio', async () => {
@@ -262,13 +246,11 @@ describe('ClusterSync', () => {
 
       sync.recordHit('host', 'attack.com');
       sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
+      sync.stop();
 
       expect(sync.isHostViolation('attack.com')).toBe(true);
       expect(sync.isHostViolation('good.com')).toBe(false);
-      sync.stop();
     });
 
     it('onError is called and deltas are retried when Redis pipeline throws', async () => {
@@ -286,15 +268,12 @@ describe('ClusterSync', () => {
 
       sync.recordHit('ip', '1.2.3.4');
       sync.recordHit('ip', '1.2.3.4');
-      sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
 
       expect(onError).toHaveBeenCalledWith(error);
       // Deltas should be merged back for retry on next cycle
       const retryDeltas = sync.getAndResetDeltas('ip');
       expect(retryDeltas.get('1.2.3.4')).toBe(2);
-      sync.stop();
     });
 
     it('onSync is called with stats after successful sync', async () => {
@@ -311,8 +290,8 @@ describe('ClusterSync', () => {
 
       sync.recordHit('ip', '1.2.3.4');
       sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
+      sync.stop();
 
       expect(onSync).toHaveBeenCalledWith(expect.objectContaining({
         publishedDeltas: { ip: 1, subnet: 0, host: 0 },
@@ -321,7 +300,6 @@ describe('ClusterSync', () => {
         hostViolations: 0,
       }));
       expect(onSync.mock.calls[0][0].syncDurationMs).toBeGreaterThanOrEqual(0);
-      sync.stop();
     });
 
     it('does not publish if no deltas accumulated', async () => {
@@ -333,13 +311,9 @@ describe('ClusterSync', () => {
         clusterMaxIpRate: 100,
       });
 
-      sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
 
-      // Pipeline should still be called for readThresholds, but ZINCRBY should not
       expect(redis._pipeline.zincrby).not.toHaveBeenCalled();
-      sync.stop();
     });
 
     it('cleanup removes stale window keys via UNLINK', async () => {
@@ -354,24 +328,14 @@ describe('ClusterSync', () => {
 
       sync.recordHit('ip', '1.2.3.4');
       sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
+      sync.stop();
 
       expect(redis._pipeline.unlink).toHaveBeenCalled();
-      sync.stop();
     });
   });
 
   describe('cardinality cap', () => {
-    // Override fake timers to leave setImmediate real so promise resolution works
-    beforeEach(() => {
-      jest.useFakeTimers({ doNotFake: ['setImmediate', 'queueMicrotask'] });
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
     it('trims sorted sets to maxTrackedActors after publish', async () => {
       const redis = createMockRedis();
       redis._pipeline.exec.mockResolvedValue([]);
@@ -384,9 +348,7 @@ describe('ClusterSync', () => {
       });
 
       sync.recordHit('ip', '1.2.3.4');
-      sync.start();
-      jest.advanceTimersByTime(2000);
-      await new Promise(resolve => setImmediate(resolve));
+      await sync.sync();
 
       // ZREMRANGEBYRANK should be called to trim lowest-scoring members
       // keeping only top maxTrackedActors entries
@@ -395,7 +357,6 @@ describe('ClusterSync', () => {
         0,
         -1001 // removes all but top 1000
       );
-      sync.stop();
     });
   });
 });
