@@ -194,6 +194,28 @@ Call `qos.destroy()` to stop the background sync interval. The interval is creat
 `onError` fires on both sync failures (publish/read pipeline errors) and background cleanup errors. These are non-fatal; the node continues operating with its previous blocklist. Log all `onError` calls at `warn` level.
 
 
+## Testing
+
+Unit tests require no external dependencies:
+
+```sh
+npm test
+```
+
+Integration tests verify cluster mode against a real Redis instance. Start Redis locally, then:
+
+```sh
+npm run test:integration
+```
+
+The tests connect to `redis://localhost:6379` by default. To use a different URL:
+
+```sh
+REDIS_URL=redis://myhost:6379 npm run test:integration
+```
+
+If Redis is unreachable the suite fails immediately with a clear error rather than hanging.
+
 ## Performance
 
 With quality of service being the entire purpose of this library needless to say
