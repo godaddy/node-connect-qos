@@ -150,7 +150,7 @@ export class ConnectQOS {
   shouldThrottleRequest(req: IncomingMessage|Http2ServerRequest): BadActorType|boolean {
     const host = this.resolveHost(req);
     const ip = this.resolveIp(req);
-    const subnet = this.resolveSubnet(req);
+    const subnet = resolveSubnetFromIp(ip, this.#subnetMaskBits);
     const hostStatus = this.getHostStatus(host, false); // defer tracking
     const ipStatus = this.getIpStatus(ip, false); // defer tracking
     const subnetStatus = this.getSubnetStatus(subnet, false); // defer tracking
