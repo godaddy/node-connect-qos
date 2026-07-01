@@ -1,5 +1,7 @@
 import LRU from 'lru-cache';
 
+export type OnTrackFn = (type: 'ip' | 'subnet' | 'host', key: string) => void;
+
 export type MetricsOptions = {
   historySize?: number;
   maxAge?: number;
@@ -15,6 +17,7 @@ export type MetricsOptions = {
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   subnetWhitelist?: Set<string>;
+  onTrack?: OnTrackFn;
 }
 
 export enum ActorStatus {
@@ -68,7 +71,8 @@ export class Metrics {
       maxSubnetRateHostViolation = DEFAULT_MAX_SUBNET_RATE_BUSY_HOST,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
       ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
-      subnetWhitelist = new Set(DEFAULT_SUBNET_WHITELIST)
+      subnetWhitelist = new Set(DEFAULT_SUBNET_WHITELIST),
+      onTrack
     } = (opts || {} as MetricsOptions);
 
     if (minHostRate > maxHostRate) throw new Error(`${minHostRate} minHostRate cannot exceed ${maxHostRate} maxHostRate`)
@@ -103,6 +107,7 @@ export class Metrics {
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#subnetWhitelist = subnetWhitelist;
+    this.#onTrack = onTrack;
   }
 
   #hosts: LRU<string, CacheItem>;
@@ -129,6 +134,7 @@ export class Metrics {
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #subnetWhitelist: Set<string>;
+  #onTrack?: OnTrackFn;
 
   get hosts(): LRU<string, CacheItem> {
     return this.#hosts;
@@ -213,6 +219,7 @@ export class Metrics {
 
   trackHost(source: string, cache?: CacheItem): CacheItem|undefined {
     if (this.#hostWhitelist.has(source)) return;
+    this.#onTrack?.('host', source);
     if (this.#maxHostRatio) {
       // only track if ratio limits enabled (source is never whitelisted here — guarded above)
       this.#hostRatioCounts.set(source, (this.#hostRatioCounts.get(source) || 0) + 1);
@@ -254,6 +261,7 @@ export class Metrics {
 
   trackIp(source: string, cache?: CacheItem): CacheItem|undefined {
     if (this.#ipWhitelist.has(source)) return;
+    this.#onTrack?.('ip', source);
     return track(source, {
       lru: this.#ips,
       cache,
@@ -272,6 +280,7 @@ export class Metrics {
 
   trackSubnet(source: string, cache?: CacheItem): CacheItem|undefined {
     if (this.#subnetWhitelist.has(source)) return;
+    this.#onTrack?.('subnet', source);
     return track(source, {
       lru: this.#subnets,
       cache,
