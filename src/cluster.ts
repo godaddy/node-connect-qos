@@ -16,9 +16,7 @@ export interface ClusterSyncOptions {
   windowMs: number;
   syncIntervalMs?: number;
   maxTrackedActors?: number;
-  clusterMinIpRate?: number;
   clusterMaxIpRate?: number;
-  clusterMinSubnetRate?: number;
   clusterMaxSubnetRate?: number;
   clusterMaxHostRatio?: number;
   clusterMaxIpRateHostViolation?: number;
@@ -39,9 +37,7 @@ export class ClusterSync {
   #windowMs: number;
   #syncIntervalMs: number;
   #maxTrackedActors: number;
-  #clusterMinIpRate: number;
   #clusterMaxIpRate: number;
-  #clusterMinSubnetRate: number;
   #clusterMaxSubnetRate: number;
   #clusterMaxHostRatio: number;
   #clusterMaxIpRateHostViolation: number;
@@ -67,9 +63,7 @@ export class ClusterSync {
     this.#windowMs = opts.windowMs;
     this.#syncIntervalMs = opts.syncIntervalMs || DEFAULT_SYNC_INTERVAL_MS;
     this.#maxTrackedActors = opts.maxTrackedActors || DEFAULT_MAX_TRACKED_ACTORS;
-    this.#clusterMinIpRate = opts.clusterMinIpRate || 0;
     this.#clusterMaxIpRate = opts.clusterMaxIpRate || 0;
-    this.#clusterMinSubnetRate = opts.clusterMinSubnetRate || 0;
     this.#clusterMaxSubnetRate = opts.clusterMaxSubnetRate || 0;
     this.#clusterMaxHostRatio = opts.clusterMaxHostRatio || 0;
     this.#clusterMaxIpRateHostViolation = opts.clusterMaxIpRateHostViolation || 0;
