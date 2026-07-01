@@ -1,5 +1,21 @@
+// Minimal interface covering only the ioredis methods ClusterSync actually calls.
+// Avoids a hard dependency on ioredis types while still providing useful type checking.
+export interface RedisPipeline {
+  zincrby(key: string, increment: number, member: string): this;
+  zrangebyscore(key: string, min: number | string, max: number | string, ...args: string[]): this;
+  zremrangebyrank(key: string, start: number, stop: number): this;
+  incrby(key: string, increment: number): this;
+  get(key: string): this;
+  unlink(...keys: string[]): this;
+  exec(): Promise<Array<[Error | null, unknown]> | null>;
+}
+
+export interface RedisLike {
+  pipeline(): RedisPipeline;
+}
+
 export interface ClusterRedisOptions {
-  client: any; // ioredis Redis or Cluster instance
+  client: RedisLike;
   keyPrefix?: string;
 }
 
@@ -32,7 +48,7 @@ const DEFAULT_MAX_TRACKED_ACTORS = 50_000;
 const DEFAULT_KEY_PREFIX = 'qos:';
 
 export class ClusterSync {
-  #redis: any;
+  #redis: RedisLike;
   #keyPrefix: string;
   #windowMs: number;
   #syncIntervalMs: number;

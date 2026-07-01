@@ -183,7 +183,10 @@ process.on('SIGTERM', () => qos.destroy());
 
 ### Redis Eviction Safety
 
-QOS sorted-set keys have no TTL. Use a dedicated Redis/Valkey instance with `maxmemory-policy volatile-lru` so only keys with TTLs are evicted. Under `volatile-lru`, QOS keys are never evicted regardless of memory pressure.
+QOS sorted-set keys have no TTL. Under `volatile-*` eviction policies, only keys **with** TTLs are eligible for eviction — keys without TTLs are never evicted but also never safe: once `maxmemory` is exhausted, Redis returns OOM errors for write commands instead of evicting. To avoid OOM errors, either:
+
+- Use a **dedicated** Redis/Valkey instance with enough memory that eviction is never needed (recommended), or
+- Use `maxmemory-policy allkeys-lru` so Redis can evict the lowest-traffic QOS keys when memory pressure is high (graceful degradation: old windows are evicted first, which is acceptable behavior).
 
 ### Lifecycle
 

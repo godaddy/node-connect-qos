@@ -1,4 +1,4 @@
-## 5.7.0
+## Unreleased (5.7.0)
 
 - **Feature** Add cluster-wide rate limiting via shared Redis/Valkey sorted sets (`ClusterSync`)
 - **Feature** Add `onTrack` callback to `Metrics` for cross-cutting visibility into per-request actor tracking

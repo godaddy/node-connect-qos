@@ -343,7 +343,7 @@ export class ConnectQOS {
     this.#metrics.trackHost(host);
     const ip = this.resolveIp(req);
     this.#metrics.trackIp(ip);
-    this.#metrics.trackSubnet(this.resolveSubnet(req));
+    this.#metrics.trackSubnet(resolveSubnetFromIp(ip, this.#subnetMaskBits));
   }
 }
 
