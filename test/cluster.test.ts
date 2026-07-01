@@ -164,4 +164,196 @@ describe('ClusterSync', () => {
       expect(sync.isHostViolation('example.com')).toBe(false);
     });
   });
+
+  describe('sync cycle', () => {
+    // Override fake timers to leave setImmediate real so promise resolution works
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'queueMicrotask'] });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('publishDeltas sends ZINCRBY commands for accumulated IPs', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      sync.recordHit('ip', '1.2.3.4');
+      sync.recordHit('ip', '5.6.7.8');
+
+      sync.start();
+      jest.advanceTimersByTime(2000);
+
+      // Wait for the async sync to complete
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(redis.pipeline).toHaveBeenCalled();
+      expect(redis._pipeline.zincrby).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:ip:w\d+$/),
+        2,
+        '1.2.3.4'
+      );
+      expect(redis._pipeline.zincrby).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:ip:w\d+$/),
+        1,
+        '5.6.7.8'
+      );
+      expect(redis._pipeline.exec).toHaveBeenCalled();
+      sync.stop();
+    });
+
+    it('readThresholds populates blockedIps from ZRANGEBYSCORE results', async () => {
+      const redis = createMockRedis();
+      // Mock pipeline exec to return IPs above threshold
+      redis._pipeline.exec.mockResolvedValueOnce([]) // publish
+        .mockResolvedValueOnce([ // read
+          [null, ['1.2.3.4', '5.6.7.8']], // current window IPs
+          [null, ['9.10.11.12']],          // prev window IPs
+        ]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 50,
+      });
+
+      sync.recordHit('ip', 'dummy');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(sync.isBlocked('ip', '1.2.3.4')).toBe(true);
+      expect(sync.isBlocked('ip', '5.6.7.8')).toBe(true);
+      expect(sync.isBlocked('ip', '9.10.11.12')).toBe(true);
+      expect(sync.isBlocked('ip', '99.99.99.99')).toBe(false);
+      sync.stop();
+    });
+
+    it('host ratio violation detected when host exceeds clusterMaxHostRatio', async () => {
+      const redis = createMockRedis();
+      // Simulate: total = 1000, host 'attack.com' = 200 (20% > 15% threshold)
+      redis._pipeline.exec.mockResolvedValueOnce([]) // publish
+        .mockResolvedValueOnce([ // read
+          [null, '1000'],                               // current total
+          [null, '0'],                                  // prev total
+          [null, ['attack.com', '200', 'good.com', '50']], // current hosts WITHSCORES
+          [null, []],                                   // prev hosts WITHSCORES
+        ]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxHostRatio: 0.15,
+      });
+
+      sync.recordHit('host', 'attack.com');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(sync.isHostViolation('attack.com')).toBe(true);
+      expect(sync.isHostViolation('good.com')).toBe(false);
+      sync.stop();
+    });
+
+    it('onError is called and deltas are retried when Redis pipeline throws', async () => {
+      const redis = createMockRedis();
+      const error = new Error('Redis connection lost');
+      redis._pipeline.exec.mockRejectedValue(error);
+      const onError = jest.fn();
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+        onError,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      sync.recordHit('ip', '1.2.3.4');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(onError).toHaveBeenCalledWith(error);
+      // Deltas should be merged back for retry on next cycle
+      const retryDeltas = sync.getAndResetDeltas('ip');
+      expect(retryDeltas.get('1.2.3.4')).toBe(2);
+      sync.stop();
+    });
+
+    it('onSync is called with stats after successful sync', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const onSync = jest.fn();
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+        onSync,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(onSync).toHaveBeenCalledWith(expect.objectContaining({
+        publishedDeltas: { ip: 1, subnet: 0, host: 0 },
+        blockedIps: 0,
+        blockedSubnets: 0,
+        hostViolations: 0,
+      }));
+      expect(onSync.mock.calls[0][0].syncDurationMs).toBeGreaterThanOrEqual(0);
+      sync.stop();
+    });
+
+    it('does not publish if no deltas accumulated', async () => {
+      const redis = createMockRedis();
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+      });
+
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+
+      // Pipeline should still be called for readThresholds, but ZINCRBY should not
+      expect(redis._pipeline.zincrby).not.toHaveBeenCalled();
+      sync.stop();
+    });
+
+    it('cleanup removes stale window keys via UNLINK', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(redis._pipeline.unlink).toHaveBeenCalled();
+      sync.stop();
+    });
+  });
 });
