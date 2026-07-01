@@ -44,6 +44,14 @@
     "lru-cache": "^7.14.1",
     "toobusy-js": "^0.5.1"
   },
+  "peerDependencies": {
+    "ioredis": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ioredis": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@swc/cli": "^0.4.0",
     "@swc/core": "^1.6.13",
@@ -52,6 +60,7 @@
     "@types/jest": "^29.5.12",
     "@types/node": "^20.14.10",
     "chokidar": "3.5.3",
+    "ioredis": "^5.9.0",
     "jest": "^29.7.0",
     "rimraf": "3.0.2",
     "ts-jest": "^29.2.2",
