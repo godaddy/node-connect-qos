@@ -356,4 +356,41 @@ describe('ClusterSync', () => {
       sync.stop();
     });
   });
+
+  describe('cardinality cap', () => {
+    // Override fake timers to leave setImmediate real so promise resolution works
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'queueMicrotask'] });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('trims sorted sets to maxTrackedActors after publish', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxIpRate: 100,
+        maxTrackedActors: 1000,
+      });
+
+      sync.recordHit('ip', '1.2.3.4');
+      sync.start();
+      jest.advanceTimersByTime(2000);
+      await new Promise(resolve => setImmediate(resolve));
+
+      // ZREMRANGEBYRANK should be called to trim lowest-scoring members
+      // keeping only top maxTrackedActors entries
+      expect(redis._pipeline.zremrangebyrank).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:ip:w\d+$/),
+        0,
+        -1001 // removes all but top 1000
+      );
+      sync.stop();
+    });
+  });
 });

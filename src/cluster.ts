@@ -234,6 +234,15 @@ export class ClusterSync {
       pipe.incrby(this.#totalKey(window), totalDelta);
     }
 
+    // Trim sorted sets to maxTrackedActors (keep highest scores = top offenders).
+    // Only trim types with active deltas — no unnecessary pipeline commands for idle types.
+    // When the set has fewer than maxTrackedActors entries, ZREMRANGEBYRANK resolves
+    // stop to a negative index that underflows past the start and is a no-op per Redis spec.
+    const trimIndex = -(this.#maxTrackedActors + 1);
+    if (ipDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('ip', window), 0, trimIndex);
+    if (subnetDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('subnet', window), 0, trimIndex);
+    if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', window), 0, trimIndex);
+
     await pipe.exec();
   }
 
