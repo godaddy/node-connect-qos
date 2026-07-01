@@ -211,12 +211,17 @@ describe('ClusterSync', () => {
     });
 
     it('readThresholds populates blockedIps from ZRANGEBYSCORE results', async () => {
+      // Pin time so the interval fires exactly at a window boundary (offset = 0, prevWeight = 1.0).
+      // advanceTimersByTime(2000) brings Date.now() to 10000*100 = 1_000_000, where offset = 0.
+      jest.setSystemTime(new Date(10000 * 100 - 2000)); // 998_000ms
+
       const redis = createMockRedis();
-      // Mock pipeline exec to return IPs above threshold
+      // threshold = 50 req/s * 10s = 500 hits. Scores of 600 exceed threshold in both windows.
+      // WITHSCORES format: [member, score, member, score, ...]
       redis._pipeline.exec.mockResolvedValueOnce([]) // publish
         .mockResolvedValueOnce([ // read
-          [null, ['1.2.3.4', '5.6.7.8']], // current window IPs
-          [null, ['9.10.11.12']],          // prev window IPs
+          [null, ['1.2.3.4', '600', '5.6.7.8', '600']], // current window IPs with scores
+          [null, ['9.10.11.12', '600']],                 // prev window IPs with scores
         ]);
       const sync = new ClusterSync({
         redis: { client: redis as any },

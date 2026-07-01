@@ -56,6 +56,7 @@ export class ClusterSync {
 
   #intervalHandle: ReturnType<typeof setInterval> | null = null;
   #running = false;
+  #syncing = false; // guard against overlapping sync cycles
 
   constructor(opts: ClusterSyncOptions) {
     this.#redis = opts.redis.client;
@@ -79,7 +80,10 @@ export class ClusterSync {
   start(): void {
     if (this.#running) return;
     this.#running = true;
-    this.#intervalHandle = setInterval(() => this.#sync(), this.#syncIntervalMs);
+    this.#intervalHandle = setInterval(() => {
+      if (this.#syncing) return; // skip tick if previous sync is still in-flight
+      this.#sync();
+    }, this.#syncIntervalMs);
     this.#intervalHandle.unref();
   }
 
@@ -93,10 +97,12 @@ export class ClusterSync {
   }
 
   recordHit(type: ActorType, key: string): void {
+    // Always count total traffic regardless of per-host cardinality cap so the
+    // denominator used for host ratio calculation stays accurate.
+    if (type === 'host') this.#totalDelta++;
     const deltas = this.#getDeltaMap(type);
     if (deltas.size >= this.#maxTrackedActors && !deltas.has(key)) return;
     deltas.set(key, (deltas.get(key) || 0) + 1);
-    if (type === 'host') this.#totalDelta++;
   }
 
   getAndResetDeltas(type: ActorType): Map<string, number> {
@@ -148,6 +154,12 @@ export class ClusterSync {
     return Math.floor(Date.now() / this.#windowMs);
   }
 
+  // Fraction of the current window that has elapsed (0 at window start, 1 at window end).
+  // Used to weight the previous window's contribution in the sliding window rate estimate.
+  #currentWindowOffset(): number {
+    return (Date.now() % this.#windowMs) / this.#windowMs;
+  }
+
   #windowKey(type: ActorType, window: number): string {
     return `${this.#keyPrefix}${type}:w${window}`;
   }
@@ -157,6 +169,7 @@ export class ClusterSync {
   }
 
   async #sync(): Promise<void> {
+    this.#syncing = true;
     const start = Date.now();
     // Snapshot all deltas synchronously before the first await.
     // JS is single-threaded so no recordHit can interleave during these assignments.
@@ -182,6 +195,8 @@ export class ClusterSync {
       // rather than being silently lost on transient Redis failures.
       this.#mergeDeltasBack(ipDeltas, subnetDeltas, hostDeltas, totalDelta);
       this.#onError?.(err as Error);
+    } finally {
+      this.#syncing = false;
     }
   }
 
@@ -237,13 +252,19 @@ export class ClusterSync {
     if (subnetDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('subnet', window), 0, trimIndex);
     if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', window), 0, trimIndex);
 
-    await pipe.exec();
+    const results = await pipe.exec();
+    const firstError = results?.find(([err]: [Error | null, any]) => err)?.[0];
+    if (firstError) throw firstError;
   }
 
   async #readThresholds(): Promise<void> {
     if (this.#clusterMaxIpRate === 0 && this.#clusterMaxSubnetRate === 0 && this.#clusterMaxHostRatio === 0) return;
     const window = this.#currentWindow();
     const prevWindow = window - 1;
+    // Sliding window weight: how much of the previous window still counts.
+    // At offset=0 (window just started) the full previous window is included;
+    // at offset=1 (window about to end) the previous window contributes nothing.
+    const prevWeight = 1 - this.#currentWindowOffset();
     const pipe = this.#redis.pipeline();
 
     const ipThreshold = this.#clusterMaxIpRate > 0
@@ -253,13 +274,15 @@ export class ClusterSync {
       ? Math.ceil(this.#clusterMaxSubnetRate * (this.#windowMs / 1000))
       : 0;
 
+    // Fetch all actors with at least one hit in each window so the sliding window
+    // computation can correctly handle actors that straddle a window boundary.
     if (ipThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('ip', window), ipThreshold, '+inf');
-      pipe.zrangebyscore(this.#windowKey('ip', prevWindow), ipThreshold, '+inf');
+      pipe.zrangebyscore(this.#windowKey('ip', window), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('ip', prevWindow), 1, '+inf', 'WITHSCORES');
     }
     if (subnetThreshold > 0) {
-      pipe.zrangebyscore(this.#windowKey('subnet', window), subnetThreshold, '+inf');
-      pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), subnetThreshold, '+inf');
+      pipe.zrangebyscore(this.#windowKey('subnet', window), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), 1, '+inf', 'WITHSCORES');
     }
     if (this.#clusterMaxHostRatio > 0) {
       pipe.get(this.#totalKey(window));
@@ -272,27 +295,56 @@ export class ClusterSync {
     const results = await pipe.exec();
     if (!results || results.length === 0) return;
 
+    const firstError = results.find(([err]: [Error | null, any]) => err)?.[0];
+    if (firstError) throw firstError;
+
     let idx = 0;
 
-    // Process IP blocks
+    // Process IP blocks using sliding window: current + prev * prevWeight >= threshold
     if (ipThreshold > 0) {
-      const currentIps: string[] = results[idx]?.[1] || [];
-      const prevIps: string[] = results[idx + 1]?.[1] || [];
+      const currentScores: string[] = results[idx]?.[1] || [];
+      const prevScores: string[] = results[idx + 1]?.[1] || [];
       idx += 2;
+
+      const currentCounts = new Map<string, number>();
+      for (let i = 0; i < currentScores.length; i += 2) {
+        currentCounts.set(currentScores[i], parseFloat(currentScores[i + 1]));
+      }
+      const prevCounts = new Map<string, number>();
+      for (let i = 0; i < prevScores.length; i += 2) {
+        prevCounts.set(prevScores[i], parseFloat(prevScores[i + 1]));
+      }
+
       const newBlockedIps = new Set<string>();
-      for (const ip of currentIps) newBlockedIps.add(ip);
-      for (const ip of prevIps) newBlockedIps.add(ip);
+      const candidates = new Set([...currentCounts.keys(), ...prevCounts.keys()]);
+      for (const ip of candidates) {
+        const sliding = (currentCounts.get(ip) || 0) + (prevCounts.get(ip) || 0) * prevWeight;
+        if (sliding >= ipThreshold) newBlockedIps.add(ip);
+      }
       this.#blockedIps = newBlockedIps;
     }
 
-    // Process subnet blocks
+    // Process subnet blocks using sliding window
     if (subnetThreshold > 0) {
-      const currentSubnets: string[] = results[idx]?.[1] || [];
-      const prevSubnets: string[] = results[idx + 1]?.[1] || [];
+      const currentScores: string[] = results[idx]?.[1] || [];
+      const prevScores: string[] = results[idx + 1]?.[1] || [];
       idx += 2;
+
+      const currentCounts = new Map<string, number>();
+      for (let i = 0; i < currentScores.length; i += 2) {
+        currentCounts.set(currentScores[i], parseFloat(currentScores[i + 1]));
+      }
+      const prevCounts = new Map<string, number>();
+      for (let i = 0; i < prevScores.length; i += 2) {
+        prevCounts.set(prevScores[i], parseFloat(prevScores[i + 1]));
+      }
+
       const newBlockedSubnets = new Set<string>();
-      for (const subnet of currentSubnets) newBlockedSubnets.add(subnet);
-      for (const subnet of prevSubnets) newBlockedSubnets.add(subnet);
+      const candidates = new Set([...currentCounts.keys(), ...prevCounts.keys()]);
+      for (const subnet of candidates) {
+        const sliding = (currentCounts.get(subnet) || 0) + (prevCounts.get(subnet) || 0) * prevWeight;
+        if (sliding >= subnetThreshold) newBlockedSubnets.add(subnet);
+      }
       this.#blockedSubnets = newBlockedSubnets;
     }
 
@@ -305,23 +357,24 @@ export class ClusterSync {
       idx += 4;
 
       const newHostViolations = new Set<string>();
-      const totalRequests = currentTotal + prevTotal;
+      // Apply the same sliding window weighting to both host counts and total traffic.
+      const slidingTotal = currentTotal + prevTotal * prevWeight;
 
-      if (totalRequests > 0) {
+      if (slidingTotal > 0) {
         // WITHSCORES returns alternating [member, score, member, score, ...]
-        const hostCounts = new Map<string, number>();
+        const currentHostCounts = new Map<string, number>();
         for (let i = 0; i < currentHostScores.length; i += 2) {
-          const host = currentHostScores[i];
-          const count = parseInt(currentHostScores[i + 1], 10);
-          hostCounts.set(host, (hostCounts.get(host) || 0) + count);
+          currentHostCounts.set(currentHostScores[i], parseInt(currentHostScores[i + 1], 10));
         }
+        const prevHostCounts = new Map<string, number>();
         for (let i = 0; i < prevHostScores.length; i += 2) {
-          const host = prevHostScores[i];
-          const count = parseInt(prevHostScores[i + 1], 10);
-          hostCounts.set(host, (hostCounts.get(host) || 0) + count);
+          prevHostCounts.set(prevHostScores[i], parseInt(prevHostScores[i + 1], 10));
         }
-        for (const [host, count] of hostCounts) {
-          if (count / totalRequests > this.#clusterMaxHostRatio) {
+
+        const candidates = new Set([...currentHostCounts.keys(), ...prevHostCounts.keys()]);
+        for (const host of candidates) {
+          const sliding = (currentHostCounts.get(host) || 0) + (prevHostCounts.get(host) || 0) * prevWeight;
+          if (sliding / slidingTotal > this.#clusterMaxHostRatio) {
             newHostViolations.add(host);
           }
         }

@@ -54,7 +54,7 @@ export class ConnectQOS {
     if (cluster) {
       this.#clusterSync = new ClusterSync({
         ...cluster,
-        windowMs: metricOptions.maxAge || 10000,
+        windowMs: metricOptions.maxAge ?? 10000,
       });
       this.#clusterSync.start();
     }
@@ -192,10 +192,9 @@ export class ConnectQOS {
     if (subnetStatus === ActorStatus.Bad) return BadActorType.badSubnet;
 
     // Cluster-wide checks (async-populated blocklists)
-    // Skip cluster checks for explicitly whitelisted IPs regardless of rate config
-    if (this.#clusterSync && !this.#metrics.ipWhitelist.has(ip)) {
-      if (this.#clusterSync.isBlocked('ip', ip)) return BadActorType.badIp;
-      if (this.#clusterSync.isBlocked('subnet', subnet)) return BadActorType.badSubnet;
+    if (this.#clusterSync) {
+      if (!this.#metrics.ipWhitelist.has(ip) && this.#clusterSync.isBlocked('ip', ip)) return BadActorType.badIp;
+      if (!this.#metrics.subnetWhitelist.has(subnet) && this.#clusterSync.isBlocked('subnet', subnet)) return BadActorType.badSubnet;
     }
 
     // If host is exceeding host ratio, apply per-actor rate overrides if configured

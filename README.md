@@ -169,10 +169,10 @@ process.on('SIGTERM', () => qos.destroy());
 
 | Option | Default | Description |
 |---|---|---|
-| `redis.client` | required | ioredis client instance (pass `null` to disable cluster sync) |
+| `redis.client` | required | ioredis `Redis` or `Cluster` instance |
 | `redis.keyPrefix` | `'qos:'` | Key prefix for all cluster Redis keys |
 | `syncIntervalMs` | `2000` | How often to sync with Redis (ms) |
-| `maxTrackedActors` | `50000` | Max actors per sorted set (oldest trimmed when exceeded) |
+| `maxTrackedActors` | `50000` | Max actors tracked per sorted set window; lowest-traffic actors are removed when exceeded |
 | `clusterMaxIpRate` | `0` (disabled) | Cluster-wide IP rate limit (req/s); 0 disables |
 | `clusterMaxSubnetRate` | `0` (disabled) | Cluster-wide /24 subnet rate limit (req/s) |
 | `clusterMaxHostRatio` | `0` (disabled) | Block host if it exceeds this fraction of total cluster traffic |
