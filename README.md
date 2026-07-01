@@ -189,10 +189,6 @@ QOS sorted-set keys have no TTL. Use a dedicated Redis/Valkey instance with `max
 
 Call `qos.destroy()` to stop the background sync interval. The interval is created with `.unref()` so it will not prevent the Node.js process from exiting, but explicit cleanup is still recommended for clean shutdown.
 
-### Disabling Cluster Sync at Runtime
-
-To disable cluster sync via a config merge (e.g. Switchboard), push `{ cluster: null }`. Using `undefined` is silently ignored by `lodash.mergeWith` — only `null` forces the key to falsy and disables sync.
-
 ### `onError` Callback
 
 `onError` fires on both sync failures (publish/read pipeline errors) and background cleanup errors. These are non-fatal; the node continues operating with its previous blocklist. Log all `onError` calls at `warn` level.
