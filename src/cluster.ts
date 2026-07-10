@@ -69,9 +69,9 @@ export class ClusterSync {
   #hostDeltas = new Map<string, number>();
   #totalDelta = 0;
 
-  // Per-window unique-IP tracking for subnets. Resets when the window rolls over.
-  #subnetIpSets = new Map<string, Set<string>>();
-  #subnetIpSetsWindow = -1;
+  // Per-window unique-IP tracking for subnets. Keyed by window index; retains both
+  // current and previous window so data is never discarded before sync() can publish it.
+  #subnetIpSetsByWindow = new Map<number, Map<string, Set<string>>>();
 
   #blockedIps = new Set<string>();
   #blockedSubnets = new Set<string>();
@@ -137,14 +137,19 @@ export class ClusterSync {
 
     if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0) {
       const win = this.#currentWindow();
-      if (win !== this.#subnetIpSetsWindow) {
-        this.#subnetIpSets.clear();
-        this.#subnetIpSetsWindow = win;
+      let windowSets = this.#subnetIpSetsByWindow.get(win);
+      if (!windowSets) {
+        windowSets = new Map();
+        this.#subnetIpSetsByWindow.set(win, windowSets);
+        // Keep only current + previous window to bound memory; evict anything older
+        for (const w of this.#subnetIpSetsByWindow.keys()) {
+          if (w < win - 1) this.#subnetIpSetsByWindow.delete(w);
+        }
       }
-      let ipSet = this.#subnetIpSets.get(key);
+      let ipSet = windowSets.get(key);
       if (!ipSet) {
         ipSet = new Set();
-        this.#subnetIpSets.set(key, ipSet);
+        windowSets.set(key, ipSet);
       }
       ipSet.add(ip);
     }
@@ -307,12 +312,14 @@ export class ClusterSync {
       pipe.incrby(this.#totalKey(win), totalDelta);
     }
 
-    // Publish unique IP counts per subnet using ZADD GT so each node sets its own count and
-    // Redis retains the maximum across all nodes (highest unique-IP count is the best signal).
-    // Only publish for the current window — stale windows are cleaned up separately.
-    if (this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && this.#subnetIpSets.size > 0 && this.#subnetIpSetsWindow === win) {
-      for (const [subnet, ipSet] of this.#subnetIpSets) {
-        pipe.zadd(this.#subnetIpsKey(win), 'GT', ipSet.size, subnet);
+    // Publish unique IP counts per subnet using ZADD GT so Redis retains the maximum
+    // across all nodes. Publish under each window's own key so data is not lost when
+    // sync() fires after a window boundary with no intervening recordHit() call.
+    if (this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && this.#subnetIpSetsByWindow.size > 0) {
+      for (const [w, windowSets] of this.#subnetIpSetsByWindow) {
+        for (const [subnet, ipSet] of windowSets) {
+          pipe.zadd(this.#subnetIpsKey(w), 'GT', ipSet.size, subnet);
+        }
       }
     }
 

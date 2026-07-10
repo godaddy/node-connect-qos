@@ -476,6 +476,32 @@ describe('ClusterSync', () => {
 
       expect(redis._pipeline.zadd).not.toHaveBeenCalled();
     });
+
+    it('publishes subnet IP data under the window it was collected in after a window rollover', async () => {
+      jest.setSystemTime(new Date(10000 * 100)); // window 100
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+
+      // Advance to window 101 before sync fires — old code would have dropped the data
+      jest.setSystemTime(new Date(10000 * 101));
+      await sync.sync();
+
+      // Data collected in window 100 must be published under qos:subnet_ips:w100, not w101
+      expect(redis._pipeline.zadd).toHaveBeenCalledWith(
+        'qos:subnet_ips:w100',
+        'GT', 2, '1.2.3.0'
+      );
+    });
   });
 
   describe('cardinality cap', () => {

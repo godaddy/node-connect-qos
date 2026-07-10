@@ -402,7 +402,7 @@ describe('getSubnetUniqueIpCount', () => {
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
   });
 
-  it('prunes stale entries from the map on each call', () => {
+  it('prunes stale entries from the map on each call to getSubnetUniqueIpCount', () => {
     const maxAge = 1000;
     const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
     global.Date.now.mockReturnValue(0);
@@ -412,6 +412,31 @@ describe('getSubnetUniqueIpCount', () => {
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0); // both stale
     // map should have been pruned — track a fresh IP and confirm count = 1 not 3
     metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.6');
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
+  });
+
+  it('prunes stale entries during trackSubnet so maps do not grow for never-blocked subnets', () => {
+    const maxAge = 1000;
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
+    global.Date.now.mockReturnValue(0);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    global.Date.now.mockReturnValue(maxAge + 1);
+    // Insert a new IP — should prune the two stale entries even before getSubnetUniqueIpCount is called
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.6');
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1); // only 1.2.3.6 is fresh
+  });
+
+  it('removes the subnet map from the LRU when all entries become stale after pruning', () => {
+    const maxAge = 1000;
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
+    global.Date.now.mockReturnValue(0);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    global.Date.now.mockReturnValue(maxAge + 1);
+    // All stale — getSubnetUniqueIpCount prunes and should remove the empty map entry
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0);
+    // A subsequent fresh insert should produce count 1 (not be confused by any ghost state)
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
   });
 });

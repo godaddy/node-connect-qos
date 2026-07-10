@@ -293,12 +293,20 @@ export class Metrics {
     if (this.#subnetWhitelist.has(source)) return;
     this.#onTrack?.('subnet', source, ip);
     if (ip && this.#minSubnetUniqueIps > 1 && this.#minSubnetRate > 0) {
+      const now = Date.now();
       let ipMap = this.#subnetIpTimestamps.get(source);
       if (!ipMap) {
         ipMap = new Map();
         this.#subnetIpTimestamps.set(source, ipMap);
       }
-      ipMap.set(ip, Date.now());
+      ipMap.set(ip, now);
+      // Prune stale entries on every insert to prevent unbounded map growth for
+      // busy subnets that are never actually blocked (so getSubnetUniqueIpCount
+      // is never called to clean up lazily).
+      const cutoff = now - this.#maxAge;
+      for (const [existingIp, ts] of ipMap) {
+        if (ts < cutoff) ipMap.delete(existingIp);
+      }
     }
     return track(source, {
       lru: this.#subnets,
@@ -319,6 +327,7 @@ export class Metrics {
         ipMap.delete(ip);
       }
     }
+    if (ipMap.size === 0) this.#subnetIpTimestamps.delete(source);
     return count;
   }
 }
