@@ -208,7 +208,7 @@ export class ConnectQOS {
     // Cluster-wide checks (async-populated blocklists)
     if (this.#clusterSync) {
       if (!this.#metrics.ipWhitelist.has(ip) && this.#clusterSync.isBlocked('ip', ip)) return BadActorType.badIp;
-      if (!this.#metrics.subnetWhitelist.has(subnet) && this.#clusterSync.isBlocked('subnet', subnet) && this.#clusterSync.isSubnetUniqueIpThresholdMet(subnet)) return BadActorType.badSubnet;
+      if (!this.#metrics.subnetWhitelist.has(subnet) && this.#clusterSync.isBlocked('subnet', subnet)) return BadActorType.badSubnet;
     }
 
     // If host is exceeding host ratio, apply per-actor rate overrides if configured
@@ -337,7 +337,9 @@ export class ConnectQOS {
 
     if (status === ActorStatus.Bad) {
       const minUnique = this.#metrics.minSubnetUniqueIps;
-      if (minUnique > 1) {
+      // Skip for IPv6: the subnet key is the IP itself, so the unique-IP count is
+      // always 1 and the gate would permanently suppress every IPv6 subnet block.
+      if (minUnique > 1 && !sourceStr.includes(':')) {
         const uniqueCount = this.#metrics.getSubnetUniqueIpCount(sourceStr);
         // Only apply the gate when IP tracking data is present. When count=0 (e.g. direct
         // isBadSubnet call without request context), fall through to the rate-only decision.

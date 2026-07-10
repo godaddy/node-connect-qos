@@ -596,6 +596,17 @@ describe('shouldThrottleRequest', () => {
     expect(qos.isBadSubnet(makeReq('1.2.3.5'))).toEqual(true);
   });
 
+  it('IPv6 subnet rate limiting is not suppressed by the unique-IP gate', () => {
+    // For IPv6, resolveSubnetFromIp returns the IP itself as the subnet key.
+    // The unique-IP count for such a key is always 1, so the gate must be skipped
+    // to avoid permanently blocking IPv6 subnet blocks.
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    const makeReq = (ip: string) => ({ headers: { host: 'somehost' }, socket: { remoteAddress: ip } } as IncomingMessage);
+    qos.shouldThrottleRequest(makeReq('2001:db8::1')); // first hit — tracked
+    // Rate is now exceeded for the IPv6 "subnet" key; gate must not suppress the block
+    expect(qos.shouldThrottleRequest(makeReq('2001:db8::1'))).toEqual(BadActorType.badSubnet);
+  });
+
   it('subnet whitelisted IPs are not flagged as badSubnet', () => {
     const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1, subnetWhitelist: new Set(['1.2.3.0']) });
     // Both requests from 1.2.3.4 (subnet 1.2.3.0/24 is whitelisted) should never get badSubnet

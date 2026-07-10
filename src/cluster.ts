@@ -135,7 +135,8 @@ export class ClusterSync {
     if (deltas.size >= this.#maxTrackedActors && !deltas.has(key)) return;
     deltas.set(key, (deltas.get(key) || 0) + 1);
 
-    if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0) {
+    // Skip IPv6 subnet keys: they are the IP itself so unique-IP count is always 1.
+    if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && !key.includes(':')) {
       const win = this.#currentWindow();
       let windowSets = this.#subnetIpSetsByWindow.get(win);
       if (!windowSets) {
@@ -461,7 +462,9 @@ export class ClusterSync {
         const sliding = (currentCounts.get(subnet) || 0) + (prevCounts.get(subnet) || 0) * prevWeight;
         if (sliding < subnetThreshold) continue;
 
-        if (subnetUniqueIpGate) {
+        // Skip the unique-IP gate for IPv6 subnet keys: they are the IP itself so
+        // the count is always 1 and the gate would permanently suppress all IPv6 blocks.
+        if (subnetUniqueIpGate && !subnet.includes(':')) {
           // Use max(current, prev * prevWeight) as the effective unique IP count.
           // This provides continuity at window boundaries: a subnet that had many
           // unique IPs in the previous window is still considered multi-IP at the

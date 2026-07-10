@@ -485,6 +485,41 @@ describe('ClusterSync', () => {
       expect(sync.isSubnetUniqueIpThresholdMet('1.2.3.0')).toBe(true);
     });
 
+    it('does not track IPv6 subnet IPs in subnetIpSetsByWindow and blocks by rate alone', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      // IPv6 subnet key exceeds rate threshold; readThresholds provides no unique-IP data.
+      // The gate must be skipped so the subnet is still blocked.
+      redis._pipeline.exec
+        .mockResolvedValueOnce([]) // publish
+        .mockResolvedValueOnce([ // read — no subnet_ips result needed since gate is skipped
+          [null, ['2001:db8::1', '1200']], // current subnet hits
+          [null, []],                       // prev subnet hits
+          [null, []],                        // current subnet unique IPs (empty — IPv6 not tracked)
+          [null, []],                        // prev subnet unique IPs
+        ]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2, // gate enabled, but must be skipped for IPv6
+      });
+
+      sync.recordHit('subnet', '2001:db8::1', '2001:db8::1');
+      sync.start();
+      await sync.sync();
+      sync.stop();
+
+      // IPv6 subnet key should not be tracked in subnetIpSetsByWindow
+      expect(redis._pipeline.zadd).not.toHaveBeenCalledWith(
+        expect.stringMatching(/subnet_ips/),
+        expect.anything(), expect.anything(), '2001:db8::1'
+      );
+      // IPv6 subnet should still be cluster-blocked by rate alone
+      expect(sync.isBlocked('subnet', '2001:db8::1')).toBe(true);
+    });
+
     it('does not track subnet IPs or publish ZADD when clusterMaxSubnetRate is 0', async () => {
       const redis = createMockRedis();
       redis._pipeline.exec.mockResolvedValue([]);
