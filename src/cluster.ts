@@ -2,6 +2,7 @@
 // Avoids a hard dependency on ioredis types while still providing useful type checking.
 export interface RedisPipeline {
   zincrby(key: string, increment: number, member: string): this;
+  zadd(key: string, ...args: (string | number)[]): this;
   zrangebyscore(key: string, min: number | string, max: number | string, ...args: string[]): this;
   zremrangebyrank(key: string, start: number, stop: number): this;
   incrby(key: string, increment: number): this;
@@ -37,6 +38,7 @@ export interface ClusterSyncOptions {
   clusterMaxHostRatio?: number;
   clusterMaxIpRateHostViolation?: number;
   clusterMaxSubnetRateHostViolation?: number;
+  clusterMinSubnetUniqueIps?: number;
   onSync?: (stats: ClusterSyncStats) => void;
   onError?: (err: Error) => void;
 }
@@ -58,6 +60,7 @@ export class ClusterSync {
   #clusterMaxHostRatio: number;
   #clusterMaxIpRateHostViolation: number;
   #clusterMaxSubnetRateHostViolation: number;
+  #clusterMinSubnetUniqueIps: number;
   #onSync?: (stats: ClusterSyncStats) => void;
   #onError?: (err: Error) => void;
 
@@ -66,8 +69,13 @@ export class ClusterSync {
   #hostDeltas = new Map<string, number>();
   #totalDelta = 0;
 
+  // Per-window unique-IP tracking for subnets. Resets when the window rolls over.
+  #subnetIpSets = new Map<string, Set<string>>();
+  #subnetIpSetsWindow = -1;
+
   #blockedIps = new Set<string>();
   #blockedSubnets = new Set<string>();
+  #subnetUniqueIpCounts = new Map<string, number>();
   #hostViolations = new Set<string>();
 
   #intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -86,6 +94,7 @@ export class ClusterSync {
     this.#clusterMaxHostRatio = Math.max(0, opts.clusterMaxHostRatio || 0);
     this.#clusterMaxIpRateHostViolation = Math.max(0, opts.clusterMaxIpRateHostViolation || 0);
     this.#clusterMaxSubnetRateHostViolation = Math.max(0, opts.clusterMaxSubnetRateHostViolation || 0);
+    this.#clusterMinSubnetUniqueIps = Math.max(1, Math.round(opts.clusterMinSubnetUniqueIps || 1));
     this.#onSync = opts.onSync;
     this.#onError = opts.onError;
   }
@@ -118,13 +127,27 @@ export class ClusterSync {
     await this.#sync();
   }
 
-  recordHit(type: ActorType, key: string): void {
+  recordHit(type: ActorType, key: string, ip?: string): void {
     // Always count total traffic regardless of per-host cardinality cap so the
     // denominator used for host ratio calculation stays accurate.
     if (type === 'host') this.#totalDelta++;
     const deltas = this.#getDeltaMap(type);
     if (deltas.size >= this.#maxTrackedActors && !deltas.has(key)) return;
     deltas.set(key, (deltas.get(key) || 0) + 1);
+
+    if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1) {
+      const win = this.#currentWindow();
+      if (win !== this.#subnetIpSetsWindow) {
+        this.#subnetIpSets.clear();
+        this.#subnetIpSetsWindow = win;
+      }
+      let ipSet = this.#subnetIpSets.get(key);
+      if (!ipSet) {
+        ipSet = new Set();
+        this.#subnetIpSets.set(key, ipSet);
+      }
+      ipSet.add(ip);
+    }
   }
 
   getAndResetDeltas(type: ActorType): Map<string, number> {
@@ -152,6 +175,10 @@ export class ClusterSync {
     return this.#blockedSubnets;
   }
 
+  get subnetUniqueIpCounts(): Map<string, number> {
+    return this.#subnetUniqueIpCounts;
+  }
+
   get hostViolations(): Set<string> {
     return this.#hostViolations;
   }
@@ -162,6 +189,11 @@ export class ClusterSync {
 
   get clusterMaxSubnetRateHostViolation(): number {
     return this.#clusterMaxSubnetRateHostViolation;
+  }
+
+  isSubnetUniqueIpThresholdMet(subnet: string): boolean {
+    if (this.#clusterMinSubnetUniqueIps <= 1) return true;
+    return (this.#subnetUniqueIpCounts.get(subnet) ?? 0) >= this.#clusterMinSubnetUniqueIps;
   }
 
   #getDeltaMap(type: ActorType): Map<string, number> {
@@ -184,6 +216,10 @@ export class ClusterSync {
 
   #windowKey(type: ActorType, window: number): string {
     return `${this.#keyPrefix}${type}:w${window}`;
+  }
+
+  #subnetIpsKey(window: number): string {
+    return `${this.#keyPrefix}subnet_ips:w${window}`;
   }
 
   #totalKey(window: number): string {
@@ -271,6 +307,15 @@ export class ClusterSync {
       pipe.incrby(this.#totalKey(win), totalDelta);
     }
 
+    // Publish unique IP counts per subnet using ZADD GT so each node sets its own count and
+    // Redis retains the maximum across all nodes (highest unique-IP count is the best signal).
+    // Only publish for the current window — stale windows are cleaned up separately.
+    if (this.#clusterMinSubnetUniqueIps > 1 && this.#subnetIpSets.size > 0 && this.#subnetIpSetsWindow === win) {
+      for (const [subnet, ipSet] of this.#subnetIpSets) {
+        pipe.zadd(this.#subnetIpsKey(win), 'GT', ipSet.size, subnet);
+      }
+    }
+
     // Trim sorted sets to maxTrackedActors (keep highest scores = top offenders).
     // Only trim types with active deltas — no unnecessary pipeline commands for idle types.
     // When the set has fewer than maxTrackedActors entries, ZREMRANGEBYRANK resolves
@@ -302,6 +347,7 @@ export class ClusterSync {
     const subnetThreshold = this.#clusterMaxSubnetRate > 0
       ? Math.ceil(this.#clusterMaxSubnetRate * (this.#windowMs / 1000))
       : 0;
+    const subnetUniqueIpGate = subnetThreshold > 0 && this.#clusterMinSubnetUniqueIps > 1;
 
     // Use threshold/2 as the minimum score for each window query. This is safe: if an actor
     // scores below threshold/2 in BOTH windows, its sliding value (current + prev*prevWeight)
@@ -316,6 +362,11 @@ export class ClusterSync {
       const subnetMinScore = Math.max(1, Math.floor(subnetThreshold / 2));
       pipe.zrangebyscore(this.#windowKey('subnet', win), subnetMinScore, '+inf', 'WITHSCORES');
       pipe.zrangebyscore(this.#windowKey('subnet', prevWindow), subnetMinScore, '+inf', 'WITHSCORES');
+    }
+    if (subnetUniqueIpGate) {
+      // Read unique IP counts for both windows. Use minScore=1 to exclude zero-hit entries.
+      pipe.zrangebyscore(this.#subnetIpsKey(win), 1, '+inf', 'WITHSCORES');
+      pipe.zrangebyscore(this.#subnetIpsKey(prevWindow), 1, '+inf', 'WITHSCORES');
     }
     if (this.#clusterMaxHostRatio > 0) {
       pipe.get(this.#totalKey(win));
@@ -361,7 +412,7 @@ export class ClusterSync {
       this.#blockedIps = newBlockedIps;
     }
 
-    // Process subnet blocks using sliding window
+    // Process subnet blocks using sliding window; optionally gate on unique IP count.
     if (subnetThreshold > 0) {
       const currentScores: string[] = results[idx]?.[1] || [];
       const prevScores: string[] = results[idx + 1]?.[1] || [];
@@ -376,13 +427,45 @@ export class ClusterSync {
         prevCounts.set(prevScores[i], parseFloat(prevScores[i + 1]));
       }
 
+      // Read unique IP counts if the gate is enabled.
+      let currentIpCounts = new Map<string, number>();
+      let prevIpCounts = new Map<string, number>();
+      if (subnetUniqueIpGate) {
+        const currentIpScores: string[] = results[idx]?.[1] || [];
+        const prevIpScores: string[] = results[idx + 1]?.[1] || [];
+        idx += 2;
+        for (let i = 0; i < currentIpScores.length; i += 2) {
+          currentIpCounts.set(currentIpScores[i], parseFloat(currentIpScores[i + 1]));
+        }
+        for (let i = 0; i < prevIpScores.length; i += 2) {
+          prevIpCounts.set(prevIpScores[i], parseFloat(prevIpScores[i + 1]));
+        }
+      }
+
       const newBlockedSubnets = new Set<string>();
+      const newSubnetUniqueIpCounts = new Map<string, number>();
       const candidates = new Set([...currentCounts.keys(), ...prevCounts.keys()]);
       for (const subnet of candidates) {
         const sliding = (currentCounts.get(subnet) || 0) + (prevCounts.get(subnet) || 0) * prevWeight;
-        if (sliding >= subnetThreshold) newBlockedSubnets.add(subnet);
+        if (sliding < subnetThreshold) continue;
+
+        if (subnetUniqueIpGate) {
+          // Use max(current, prev * prevWeight) as the effective unique IP count.
+          // This provides continuity at window boundaries: a subnet that had many
+          // unique IPs in the previous window is still considered multi-IP at the
+          // start of the next window.
+          const effectiveIpCount = Math.max(
+            currentIpCounts.get(subnet) || 0,
+            Math.floor((prevIpCounts.get(subnet) || 0) * prevWeight)
+          );
+          newSubnetUniqueIpCounts.set(subnet, effectiveIpCount);
+          if (effectiveIpCount < this.#clusterMinSubnetUniqueIps) continue;
+        }
+
+        newBlockedSubnets.add(subnet);
       }
       this.#blockedSubnets = newBlockedSubnets;
+      if (subnetUniqueIpGate) this.#subnetUniqueIpCounts = newSubnetUniqueIpCounts;
     }
 
     // Process host ratio violations
@@ -427,6 +510,7 @@ export class ClusterSync {
     for (const type of ['ip', 'subnet', 'host'] as ActorType[]) {
       pipe.unlink(this.#windowKey(type, staleWindow));
     }
+    pipe.unlink(this.#subnetIpsKey(staleWindow));
     pipe.unlink(this.#totalKey(staleWindow));
     pipe.exec().catch((err: Error) => this.#onError?.(err));
   }

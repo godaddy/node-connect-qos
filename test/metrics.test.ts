@@ -284,11 +284,13 @@ describe('onTrack callback', () => {
     expect(onTrack).toHaveBeenCalledWith('ip', '1.2.3.4');
   });
 
-  it('fires onTrack with type and key on each trackSubnet call', () => {
+  it('fires onTrack with type, key, and optional ip on each trackSubnet call', () => {
     const onTrack = jest.fn();
     const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 10, onTrack });
     metrics.trackSubnet('1.2.3.0');
-    expect(onTrack).toHaveBeenCalledWith('subnet', '1.2.3.0');
+    expect(onTrack).toHaveBeenCalledWith('subnet', '1.2.3.0', undefined);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    expect(onTrack).toHaveBeenCalledWith('subnet', '1.2.3.0', '1.2.3.4');
   });
 
   it('fires onTrack with type and key on each trackHost call', () => {
@@ -357,5 +359,39 @@ describe('getSubnetInfo', () => {
     global.Date.now.mockReturnValue(maxAge+1);
     expect(metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(0); // everything is stale
     expect(metrics.getSubnetInfo('1.2.3')?.rate).toEqual(0); // insufficient history
+  });
+});
+
+describe('getSubnetUniqueIpCount', () => {
+  it('returns 0 when no IPs tracked', () => {
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0);
+  });
+
+  it('not populated when minSubnetUniqueIps is 1 (default)', () => {
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1 });
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0);
+  });
+
+  it('counts distinct IPs within maxAge', () => {
+    const maxAge = 1000;
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4'); // duplicate — still 2 unique
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(2);
+  });
+
+  it('excludes IPs whose last-seen timestamp is beyond maxAge', () => {
+    const maxAge = 1000;
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
+    global.Date.now.mockReturnValue(0);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    global.Date.now.mockReturnValue(maxAge + 1);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    // 1.2.3.4 last seen at t=0, now t=maxAge+1, so it's stale
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
   });
 });

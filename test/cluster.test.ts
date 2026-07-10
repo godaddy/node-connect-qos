@@ -3,6 +3,7 @@ import { ClusterSync, ClusterSyncOptions } from '../src/cluster';
 function createMockRedis() {
   const pipeline = {
     zincrby: jest.fn().mockReturnThis(),
+    zadd: jest.fn().mockReturnThis(),
     zrangebyscore: jest.fn().mockReturnThis(),
     zremrangebyrank: jest.fn().mockReturnThis(),
     incrby: jest.fn().mockReturnThis(),
@@ -376,6 +377,86 @@ describe('ClusterSync', () => {
       sync.stop();
 
       expect(redis._pipeline.unlink).toHaveBeenCalled();
+    });
+
+    it('publishes subnet unique IP counts via ZADD GT when clusterMinSubnetUniqueIps > 1', async () => {
+      jest.setSystemTime(new Date(10000 * 100)); // pin to window boundary
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4'); // duplicate — still 2 unique IPs
+      await sync.sync();
+
+      expect(redis._pipeline.zadd).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:subnet_ips:w\d+$/),
+        'GT', 2, '1.2.3.0'
+      );
+    });
+
+    it('readThresholds gates subnet block on unique IP count', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      // threshold = 100 req/s * 10s = 1000. Subnet has 1200 hits (exceeds) but only 1 unique IP.
+      redis._pipeline.exec
+        .mockResolvedValueOnce([]) // publish
+        .mockResolvedValueOnce([ // read
+          [null, ['1.2.3.0', '1200']], // current subnet hits
+          [null, []],                   // prev subnet hits
+          [null, ['1.2.3.0', '1']],    // current subnet unique IPs (only 1!)
+          [null, []],                   // prev subnet unique IPs
+        ]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.start();
+      await sync.sync();
+      sync.stop();
+
+      expect(sync.isBlocked('subnet', '1.2.3.0')).toBe(false); // rate exceeded but only 1 unique IP
+      expect(sync.isSubnetUniqueIpThresholdMet('1.2.3.0')).toBe(false);
+    });
+
+    it('readThresholds blocks subnet when both rate and unique IP threshold are met', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      redis._pipeline.exec
+        .mockResolvedValueOnce([]) // publish
+        .mockResolvedValueOnce([ // read
+          [null, ['1.2.3.0', '1200']], // current subnet hits
+          [null, []],                   // prev subnet hits
+          [null, ['1.2.3.0', '5']],    // current subnet unique IPs (5 ≥ 2)
+          [null, []],                   // prev subnet unique IPs
+        ]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.start();
+      await sync.sync();
+      sync.stop();
+
+      expect(sync.isBlocked('subnet', '1.2.3.0')).toBe(true);
+      expect(sync.isSubnetUniqueIpThresholdMet('1.2.3.0')).toBe(true);
     });
   });
 

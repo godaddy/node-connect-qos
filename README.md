@@ -105,6 +105,14 @@ For you tweakers out there, here's some levers to pull:
 * **maxSubnetRateHostViolation** (default: `0`) - Maximum subnet rate (req/s) when the target host
   is exceeding `maxHostRatio`. When set, only subnets exceeding this rate against a violated host
   receive `hostViolation`; subnets below the threshold are not flagged. Disable by setting to `0`.
+* **minSubnetUniqueIps** (default: `0.5`) - Minimum number of distinct source IPs within a subnet
+  required before the subnet can be flagged as a bad actor. This prevents a single abusive IP from
+  triggering a block for its entire subnet. Accepts two forms:
+  - **Fraction** (`0 < value < 1`): resolved as a percentage of the subnet's host count.
+    `0.5` on a `/24` (256 hosts) requires at least 128 unique IPs.
+  - **Absolute** (`value >= 1`): used as-is (rounded to the nearest integer).
+  Set to `1` to restore legacy behaviour where any rate-exceeding subnet is immediately blocked.
+  Requires subnet tracking to be enabled (`minSubnetRate > 0`).
 * **subnetWhitelist** `Set<string>([])` - Subnet keys that are never flagged as bad actors.
   Key format matches the derived subnet key (e.g. `103.142.223.0` for a `/24`).
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
@@ -178,6 +186,7 @@ process.on('SIGTERM', () => qos.destroy());
 | `clusterMaxHostRatio` | `0` (disabled) | Block host if it exceeds this fraction of total cluster traffic |
 | `clusterMaxIpRateHostViolation` | `0` (disabled) | Per-IP rate limit when the target host has a cluster violation. **Requires local IP tracking to be enabled** (`minIpRate > 0`); enforced via local `Metrics` history, so it has no effect when local tracking is disabled. |
 | `clusterMaxSubnetRateHostViolation` | `0` (disabled) | Per-subnet rate limit when the target host has a cluster violation. **Requires local subnet tracking to be enabled** (`minSubnetRate > 0`); same constraint as above. |
+| `clusterMinSubnetUniqueIps` | `0.5` | Minimum unique source IPs across the cluster before a subnet can be cluster-blocked. Accepts the same fraction/absolute semantics as the local `minSubnetUniqueIps` option: `0.5` resolves to 50 % of the subnet's host count (128 for `/24`); any value `>= 1` is used as an absolute count. Set to `1` to disable the gate (any single rate-exceeding subnet is blocked). |
 | `onSync` | — | Callback after each sync cycle; receives `ClusterSyncStats` |
 | `onError` | — | Callback on Redis sync errors (non-fatal; node continues operating) |
 
