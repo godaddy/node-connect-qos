@@ -312,17 +312,6 @@ export class ClusterSync {
       pipe.incrby(this.#totalKey(win), totalDelta);
     }
 
-    // Publish unique IP counts per subnet using ZADD GT so Redis retains the maximum
-    // across all nodes. Publish under each window's own key so data is not lost when
-    // sync() fires after a window boundary with no intervening recordHit() call.
-    if (this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && this.#subnetIpSetsByWindow.size > 0) {
-      for (const [w, windowSets] of this.#subnetIpSetsByWindow) {
-        for (const [subnet, ipSet] of windowSets) {
-          pipe.zadd(this.#subnetIpsKey(w), 'GT', ipSet.size, subnet);
-        }
-      }
-    }
-
     // Trim sorted sets to maxTrackedActors (keep highest scores = top offenders).
     // Only trim types with active deltas — no unnecessary pipeline commands for idle types.
     // When the set has fewer than maxTrackedActors entries, ZREMRANGEBYRANK resolves
@@ -331,6 +320,20 @@ export class ClusterSync {
     if (ipDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('ip', win), 0, trimIndex);
     if (subnetDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('subnet', win), 0, trimIndex);
     if (hostDeltas.size > 0) pipe.zremrangebyrank(this.#windowKey('host', win), 0, trimIndex);
+
+    // Publish unique IP counts per subnet using ZADD GT so Redis retains the maximum
+    // across all nodes. Publish under each window's own key so data is not lost when
+    // sync() fires after a window boundary with no intervening recordHit() call.
+    // Trim each key: multiple nodes contribute different subnets via ZADD GT so the
+    // union can exceed maxTrackedActors without this trim.
+    if (this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && this.#subnetIpSetsByWindow.size > 0) {
+      for (const [w, windowSets] of this.#subnetIpSetsByWindow) {
+        for (const [subnet, ipSet] of windowSets) {
+          pipe.zadd(this.#subnetIpsKey(w), 'GT', ipSet.size, subnet);
+        }
+        pipe.zremrangebyrank(this.#subnetIpsKey(w), 0, trimIndex);
+      }
+    }
 
     const results = await pipe.exec();
     if (!results) throw new Error('Redis pipeline exec returned null');

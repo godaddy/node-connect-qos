@@ -527,5 +527,29 @@ describe('ClusterSync', () => {
         -1001 // removes all but top 1000
       );
     });
+
+    it('trims subnet_ips sorted sets to maxTrackedActors after publish', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2,
+        maxTrackedActors: 1000,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+      await sync.sync();
+
+      expect(redis._pipeline.zremrangebyrank).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:subnet_ips:w\d+$/),
+        0,
+        -1001 // removes all but top 1000
+      );
+    });
   });
 });
