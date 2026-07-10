@@ -349,8 +349,9 @@ export class ConnectQOS {
 
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
-      // forward cache to avoid additional lookup
-      this.#metrics.trackSubnet(sourceStr, sourceInfo as CacheItem);
+      // forward cache to avoid additional lookup; pass IP for unique-IP gate tracking
+      const ip = typeof source !== 'string' ? this.resolveIp(source) : undefined;
+      this.#metrics.trackSubnet(sourceStr, sourceInfo as CacheItem, ip);
     }
 
     return status;

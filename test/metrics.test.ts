@@ -375,6 +375,13 @@ describe('getSubnetUniqueIpCount', () => {
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0);
   });
 
+  it('not populated when minSubnetRate is 0 (subnet tracking disabled)', () => {
+    const metrics = new Metrics({ minSubnetRate: 0, maxSubnetRate: 0, minSubnetUniqueIps: 2 });
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0);
+  });
+
   it('counts distinct IPs within maxAge', () => {
     const maxAge = 1000;
     const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
@@ -392,6 +399,19 @@ describe('getSubnetUniqueIpCount', () => {
     global.Date.now.mockReturnValue(maxAge + 1);
     metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
     // 1.2.3.4 last seen at t=0, now t=maxAge+1, so it's stale
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
+  });
+
+  it('prunes stale entries from the map on each call', () => {
+    const maxAge = 1000;
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2, maxAge });
+    global.Date.now.mockReturnValue(0);
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    global.Date.now.mockReturnValue(maxAge + 1);
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(0); // both stale
+    // map should have been pruned — track a fresh IP and confirm count = 1 not 3
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.6');
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
   });
 });

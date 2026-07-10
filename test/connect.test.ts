@@ -585,6 +585,17 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(BadActorType.badSubnet);
   });
 
+  it('isBadSubnet(req) populates unique-IP tracking so the gate works', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    const makeReq = (ip: string) => ({ headers: { host: 'somehost' }, socket: { remoteAddress: ip } } as IncomingMessage);
+    // Build up subnet rate history via shouldThrottleRequest (the hot path)
+    qos.shouldThrottleRequest(makeReq('1.2.3.4')); // first hit — tracked
+    // Now call isBadSubnet(req) directly with a second IP — it should track 1.2.3.5 and then unblock
+    expect(qos.isBadSubnet(makeReq('1.2.3.5'))).toEqual(false); // rate exceeded, but only 1 unique IP yet
+    // 1.2.3.5 is now tracked; a third call exceeds rate AND has 2 unique IPs → blocked
+    expect(qos.isBadSubnet(makeReq('1.2.3.5'))).toEqual(true);
+  });
+
   it('subnet whitelisted IPs are not flagged as badSubnet', () => {
     const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1, subnetWhitelist: new Set(['1.2.3.0']) });
     // Both requests from 1.2.3.4 (subnet 1.2.3.0/24 is whitelisted) should never get badSubnet

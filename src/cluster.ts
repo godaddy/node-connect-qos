@@ -135,7 +135,7 @@ export class ClusterSync {
     if (deltas.size >= this.#maxTrackedActors && !deltas.has(key)) return;
     deltas.set(key, (deltas.get(key) || 0) + 1);
 
-    if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1) {
+    if (type === 'subnet' && ip && this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0) {
       const win = this.#currentWindow();
       if (win !== this.#subnetIpSetsWindow) {
         this.#subnetIpSets.clear();
@@ -310,7 +310,7 @@ export class ClusterSync {
     // Publish unique IP counts per subnet using ZADD GT so each node sets its own count and
     // Redis retains the maximum across all nodes (highest unique-IP count is the best signal).
     // Only publish for the current window — stale windows are cleaned up separately.
-    if (this.#clusterMinSubnetUniqueIps > 1 && this.#subnetIpSets.size > 0 && this.#subnetIpSetsWindow === win) {
+    if (this.#clusterMinSubnetUniqueIps > 1 && this.#clusterMaxSubnetRate > 0 && this.#subnetIpSets.size > 0 && this.#subnetIpSetsWindow === win) {
       for (const [subnet, ipSet] of this.#subnetIpSets) {
         pipe.zadd(this.#subnetIpsKey(win), 'GT', ipSet.size, subnet);
       }

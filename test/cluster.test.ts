@@ -458,6 +458,24 @@ describe('ClusterSync', () => {
       expect(sync.isBlocked('subnet', '1.2.3.0')).toBe(true);
       expect(sync.isSubnetUniqueIpThresholdMet('1.2.3.0')).toBe(true);
     });
+
+    it('does not track subnet IPs or publish ZADD when clusterMaxSubnetRate is 0', async () => {
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 0, // subnet rate limiting disabled
+        clusterMinSubnetUniqueIps: 2,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+      await sync.sync();
+
+      expect(redis._pipeline.zadd).not.toHaveBeenCalled();
+    });
   });
 
   describe('cardinality cap', () => {

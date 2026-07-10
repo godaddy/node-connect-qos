@@ -292,7 +292,7 @@ export class Metrics {
   trackSubnet(source: string, cache?: CacheItem, ip?: string): CacheItem|undefined {
     if (this.#subnetWhitelist.has(source)) return;
     this.#onTrack?.('subnet', source, ip);
-    if (ip && this.#minSubnetUniqueIps > 1) {
+    if (ip && this.#minSubnetUniqueIps > 1 && this.#minSubnetRate > 0) {
       let ipMap = this.#subnetIpTimestamps.get(source);
       if (!ipMap) {
         ipMap = new Map();
@@ -312,8 +312,12 @@ export class Metrics {
     if (!ipMap) return 0;
     const cutoff = Date.now() - this.#maxAge;
     let count = 0;
-    for (const ts of ipMap.values()) {
-      if (ts >= cutoff) count++;
+    for (const [ip, ts] of ipMap) {
+      if (ts >= cutoff) {
+        count++;
+      } else {
+        ipMap.delete(ip);
+      }
     }
     return count;
   }
