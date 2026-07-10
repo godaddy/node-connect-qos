@@ -151,7 +151,9 @@ export class ClusterSync {
         ipSet = new Set();
         windowSets.set(key, ipSet);
       }
-      ipSet.add(ip);
+      // Stop tracking once the threshold is met — we only need to know whether
+      // enough distinct IPs have been seen, not the exact count beyond that.
+      if (ipSet.size < this.#clusterMinSubnetUniqueIps) ipSet.add(ip);
     }
   }
 

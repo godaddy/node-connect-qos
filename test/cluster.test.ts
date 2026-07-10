@@ -402,6 +402,32 @@ describe('ClusterSync', () => {
       );
     });
 
+    it('caps per-subnet IP tracking at clusterMinSubnetUniqueIps to bound memory', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 2, // threshold = 2
+      });
+
+      // Record 4 distinct IPs — only first 2 should be retained (cap = threshold)
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.6'); // should not be added — cap reached
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.7'); // should not be added — cap reached
+      await sync.sync();
+
+      // Published count is capped at threshold (2), not 4
+      expect(redis._pipeline.zadd).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:subnet_ips:w\d+$/),
+        'GT', 2, '1.2.3.0'
+      );
+    });
+
     it('readThresholds gates subnet block on unique IP count', async () => {
       jest.setSystemTime(new Date(10000 * 100));
       const redis = createMockRedis();
