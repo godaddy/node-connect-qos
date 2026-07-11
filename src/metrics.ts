@@ -292,7 +292,9 @@ export class Metrics {
   trackSubnet(source: string, cache?: CacheItem, ip?: string): CacheItem|undefined {
     if (this.#subnetWhitelist.has(source)) return;
     this.#onTrack?.('subnet', source, ip);
-    if (ip && this.#minSubnetUniqueIps > 1 && this.#minSubnetRate > 0) {
+    // Skip IPv6 keys: they are the IP itself so unique-IP count is always 1 and the
+    // gate is not applied to them; tracking would add work without any benefit.
+    if (ip && this.#minSubnetUniqueIps > 1 && this.#minSubnetRate > 0 && !source.includes(':')) {
       const now = Date.now();
       let ipMap = this.#subnetIpTimestamps.get(source);
       if (!ipMap) {
@@ -300,9 +302,9 @@ export class Metrics {
         this.#subnetIpTimestamps.set(source, ipMap);
       }
       ipMap.set(ip, now);
-      // Prune stale entries on every insert to prevent unbounded map growth for
-      // busy subnets that are never actually blocked (so getSubnetUniqueIpCount
-      // is never called to clean up lazily).
+      // Prune stale entries on every insert so maps don't retain IPs older than
+      // maxAge for busy subnets that are never actually blocked (i.e. where
+      // getSubnetUniqueIpCount is never called to clean up lazily).
       const cutoff = now - this.#maxAge;
       for (const [existingIp, ts] of ipMap) {
         if (ts < cutoff) ipMap.delete(existingIp);
