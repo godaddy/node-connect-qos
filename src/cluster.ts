@@ -200,7 +200,9 @@ export class ClusterSync {
   }
 
   isSubnetUniqueIpThresholdMet(subnet: string): boolean {
-    if (this.#clusterMinSubnetUniqueIps <= 1) return true;
+    if (this.#clusterMinSubnetUniqueIps <= 1) return true; // gate disabled
+    if (this.#clusterMaxSubnetRate === 0) return true;     // subnet blocking disabled — gate not active
+    if (subnet.includes(':')) return true;                  // IPv6 — gate not applied to these keys
     return (this.#subnetUniqueIpCounts.get(subnet) ?? 0) >= this.#clusterMinSubnetUniqueIps;
   }
 

@@ -113,6 +113,9 @@ For you tweakers out there, here's some levers to pull:
   - **Absolute** (`value >= 1`): used as-is (rounded to the nearest integer).
   Set to `1` to restore legacy behaviour where any rate-exceeding subnet is immediately blocked.
   Requires subnet tracking to be enabled (`minSubnetRate > 0`).
+  **Note:** the gate only applies when a source IP is available. Direct calls such as
+  `isBadSubnet('1.2.3.0')` without a request object have no IP context, so the gate is
+  skipped and the subnet is evaluated by rate alone.
 * **subnetWhitelist** `Set<string>([])` - Subnet keys that are never flagged as bad actors.
   Key format matches the derived subnet key (e.g. `103.142.223.0` for a `/24`).
 * **errorStatusCode** (default: `503`) - The HTTP status code to return if the
@@ -186,7 +189,7 @@ process.on('SIGTERM', () => qos.destroy());
 | `clusterMaxHostRatio` | `0` (disabled) | Block host if it exceeds this fraction of total cluster traffic |
 | `clusterMaxIpRateHostViolation` | `0` (disabled) | Per-IP rate limit when the target host has a cluster violation. **Requires local IP tracking to be enabled** (`minIpRate > 0`); enforced via local `Metrics` history, so it has no effect when local tracking is disabled. |
 | `clusterMaxSubnetRateHostViolation` | `0` (disabled) | Per-subnet rate limit when the target host has a cluster violation. **Requires local subnet tracking to be enabled** (`minSubnetRate > 0`); same constraint as above. |
-| `clusterMinSubnetUniqueIps` | `0.5` | Minimum unique source IPs observed **by any single node** within a window before a subnet can be cluster-blocked. Each node tracks and publishes its own observed count; Redis retains the maximum across nodes via `ZADD GT` (requires Redis ≥ 6.2 / Valkey ≥ 7.2). Accepts the same fraction/absolute semantics as the local `minSubnetUniqueIps` option: `0.5` resolves to 50 % of the subnet's host count (128 for `/24`); any value `>= 1` is used as an absolute count. Set to `1` to disable the gate (any single rate-exceeding subnet is blocked). |
+| `clusterMinSubnetUniqueIps` | `0.5` | Minimum unique source IPs observed **by any single node** before a subnet can be cluster-blocked. Each node tracks and publishes its own observed count; Redis retains the maximum across nodes via `ZADD GT` (requires Redis ≥ 6.2 / Valkey ≥ 7.2). The gate uses sliding-window continuity: diversity seen in the previous window is carried forward proportionally (`max(current, floor(prev × prevWeight))`), so a transiently quiet node does not lose its tracking data at window boundaries. Accepts the same fraction/absolute semantics as the local `minSubnetUniqueIps` option: `0.5` resolves to 50 % of the subnet's host count (128 for `/24`); any value `>= 1` is used as an absolute count. Set to `1` to disable the gate (any single rate-exceeding subnet is blocked). |
 | `onSync` | — | Callback after each sync cycle; receives `ClusterSyncStats` |
 | `onError` | — | Callback on Redis sync errors (non-fatal; node continues operating) |
 

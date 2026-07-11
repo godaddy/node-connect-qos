@@ -164,6 +164,29 @@ describe('ClusterSync', () => {
       });
       expect(sync.isHostViolation('example.com')).toBe(false);
     });
+
+    it('isSubnetUniqueIpThresholdMet returns true for non-applicable cases', () => {
+      const redis = createMockRedis();
+      // gate enabled (threshold > 1) but subnet blocking is off
+      const syncNoSubnetRate = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 0,
+        clusterMinSubnetUniqueIps: 50,
+      });
+      expect(syncNoSubnetRate.isSubnetUniqueIpThresholdMet('1.2.3.0')).toBe(true);
+
+      // gate enabled but key is IPv6 — gate does not apply to IPv6 keys
+      const syncWithSubnetRate = new ClusterSync({
+        redis: { client: redis as any },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 50,
+      });
+      expect(syncWithSubnetRate.isSubnetUniqueIpThresholdMet('2001:db8::1')).toBe(true);
+    });
   });
 
   describe('sync cycle', () => {
