@@ -301,13 +301,16 @@ export class Metrics {
         ipMap = new Map();
         this.#subnetIpTimestamps.set(source, ipMap);
       }
-      ipMap.set(ip, now);
-      // Prune stale entries on every insert so maps don't retain IPs older than
-      // maxAge for busy subnets that are never actually blocked (i.e. where
-      // getSubnetUniqueIpCount is never called to clean up lazily).
+      // Prune stale entries before checking the cap so stale IPs don't hold
+      // slots that prevent new IPs from being tracked.
       const cutoff = now - this.#maxAge;
       for (const [existingIp, ts] of ipMap) {
         if (ts < cutoff) ipMap.delete(existingIp);
+      }
+      // Refresh already-tracked IPs unconditionally; only add new IPs when below
+      // the cap so the map (and the prune walk above) stay bounded at minSubnetUniqueIps.
+      if (ipMap.has(ip) || ipMap.size < this.#minSubnetUniqueIps) {
+        ipMap.set(ip, now);
       }
     }
     return track(source, {
