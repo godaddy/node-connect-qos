@@ -439,4 +439,12 @@ describe('getSubnetUniqueIpCount', () => {
     metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
     expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(1);
   });
+
+  it('counts IPv4-mapped IPv6 (::ffff:a.b.c.d) as the same IP as its plain IPv4 form', () => {
+    const metrics = new Metrics({ minSubnetRate: 1, maxSubnetRate: 10, minSubnetUniqueIps: 3, maxAge: 10000 });
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.4');
+    metrics.trackSubnet('1.2.3.0', undefined, '::ffff:1.2.3.4'); // same IP, mapped form — should not add
+    metrics.trackSubnet('1.2.3.0', undefined, '1.2.3.5');
+    expect(metrics.getSubnetUniqueIpCount('1.2.3.0')).toEqual(2);
+  });
 });

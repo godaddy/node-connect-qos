@@ -451,6 +451,29 @@ describe('ClusterSync', () => {
       );
     });
 
+    it('normalizes IPv4-mapped IPv6 so the same IP is not counted twice', async () => {
+      jest.setSystemTime(new Date(10000 * 100));
+      const redis = createMockRedis();
+      redis._pipeline.exec.mockResolvedValue([]);
+      const sync = new ClusterSync({
+        redis: { client: redis as any, keyPrefix: 'qos:' },
+        windowMs: 10000,
+        syncIntervalMs: 2000,
+        clusterMaxSubnetRate: 100,
+        clusterMinSubnetUniqueIps: 3,
+      });
+
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.4');
+      sync.recordHit('subnet', '1.2.3.0', '::ffff:1.2.3.4'); // same IP, mapped form — should not add
+      sync.recordHit('subnet', '1.2.3.0', '1.2.3.5');
+      await sync.sync();
+
+      expect(redis._pipeline.zadd).toHaveBeenCalledWith(
+        expect.stringMatching(/^qos:subnet_ips:w\d+$/),
+        'GT', 2, '1.2.3.0'
+      );
+    });
+
     it('readThresholds gates subnet block on unique IP count', async () => {
       jest.setSystemTime(new Date(10000 * 100));
       const redis = createMockRedis();

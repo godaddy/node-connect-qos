@@ -1,3 +1,5 @@
+import { normalizeIp } from './util';
+
 // Minimal interface covering only the ioredis methods ClusterSync actually calls.
 // Avoids a hard dependency on ioredis types while still providing useful type checking.
 export interface RedisPipeline {
@@ -154,7 +156,8 @@ export class ClusterSync {
       }
       // Stop tracking once the threshold is met — we only need to know whether
       // enough distinct IPs have been seen, not the exact count beyond that.
-      if (ipSet.size < this.#clusterMinSubnetUniqueIps) ipSet.add(ip);
+      // Normalize IPv4-mapped IPv6 so the same physical client isn't counted twice.
+      if (ipSet.size < this.#clusterMinSubnetUniqueIps) ipSet.add(normalizeIp(ip));
     }
   }
 

@@ -1,4 +1,5 @@
 import LRU from 'lru-cache';
+import { normalizeIp } from './util';
 
 export type OnTrackFn = (type: 'ip' | 'subnet' | 'host', key: string, ip?: string) => void;
 
@@ -307,10 +308,13 @@ export class Metrics {
       for (const [existingIp, ts] of ipMap) {
         if (ts < cutoff) ipMap.delete(existingIp);
       }
+      // Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d → a.b.c.d) so the same physical
+      // client is not double-counted when observed via both address forms.
+      const normalizedIp = normalizeIp(ip);
       // Refresh already-tracked IPs unconditionally; only add new IPs when below
       // the cap so the map (and the prune walk above) stay bounded at minSubnetUniqueIps.
-      if (ipMap.has(ip) || ipMap.size < this.#minSubnetUniqueIps) {
-        ipMap.set(ip, now);
+      if (ipMap.has(normalizedIp) || ipMap.size < this.#minSubnetUniqueIps) {
+        ipMap.set(normalizedIp, now);
       }
     }
     return track(source, {
