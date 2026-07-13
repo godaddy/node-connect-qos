@@ -327,7 +327,7 @@ describe('isBadSubnet', () => {
   });
 
   it('returns true if bad subnets', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 2, maxSubnetRate: 2 });
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 2, maxSubnetRate: 2, minSubnetUniqueIps: 1 });
     expect(qos.isBadSubnet('1.2.3', false)).toEqual(false); // insufficient history
     qos.isBadSubnet('1.2.3', true);
     expect(qos.isBadSubnet('1.2.3', false)).toEqual(false); // insufficient history
@@ -336,7 +336,7 @@ describe('isBadSubnet', () => {
   });
 
   it('returns true if throttling bad subnets', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1 });
     expect(qos.isBadSubnet('1.2.3')).toEqual(false);
     expect(qos.metrics.getSubnetInfo('1.2.3')?.history.length).toEqual(1);
     expect(qos.isBadSubnet('1.2.3')).toEqual(true);
@@ -344,7 +344,7 @@ describe('isBadSubnet', () => {
   });
 
   it('resolves subnet from request socket address', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1 });
     const req = { headers: {}, socket: { remoteAddress: '1.2.3.4' } } as IncomingMessage;
     expect(qos.isBadSubnet(req)).toEqual(false);       // first hit — insufficient history
     expect(qos.isBadSubnet(req)).toEqual(true);        // second hit — bad subnet
@@ -540,7 +540,7 @@ describe('shouldThrottleRequest', () => {
   });
 
   it('badSubnet returned when subnet rate exceeded', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1 });
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1 });
     // First request: insufficient history → not throttled
     expect(qos.shouldThrottleRequest({
       headers: { host: 'somehost' },
@@ -553,8 +553,62 @@ describe('shouldThrottleRequest', () => {
     } as IncomingMessage)).toEqual(BadActorType.badSubnet);
   });
 
+  it('single abusive IP does not trigger badSubnet when minSubnetUniqueIps > 1', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    // Both requests from the same IP — subnet rate exceeds threshold but only 1 unique IP
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false); // rate exceeded but only 1 unique IP — subnet not blocked
+  });
+
+  it('badSubnet triggered when minSubnetUniqueIps threshold is met', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    // First request from 1.2.3.4: tracked, subnet history starts
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.4' }
+    } as IncomingMessage)).toEqual(false);
+    // Second request from 1.2.3.5: rate exceeded, but 1.2.3.5 not yet recorded → only 1 unique IP → not blocked; 1.2.3.5 now tracked
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.5' }
+    } as IncomingMessage)).toEqual(false);
+    // Third request: rate still exceeded AND both IPs are now tracked → badSubnet
+    expect(qos.shouldThrottleRequest({
+      headers: { host: 'somehost' },
+      socket: { remoteAddress: '1.2.3.5' }
+    } as IncomingMessage)).toEqual(BadActorType.badSubnet);
+  });
+
+  it('isBadSubnet(req) populates unique-IP tracking so the gate works', () => {
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    const makeReq = (ip: string) => ({ headers: { host: 'somehost' }, socket: { remoteAddress: ip } } as IncomingMessage);
+    // Build up subnet rate history via shouldThrottleRequest (the hot path)
+    qos.shouldThrottleRequest(makeReq('1.2.3.4')); // first hit — tracked
+    // Now call isBadSubnet(req) directly with a second IP — it should track 1.2.3.5 and then unblock
+    expect(qos.isBadSubnet(makeReq('1.2.3.5'))).toEqual(false); // rate exceeded, but only 1 unique IP yet
+    // 1.2.3.5 is now tracked; a third call exceeds rate AND has 2 unique IPs → blocked
+    expect(qos.isBadSubnet(makeReq('1.2.3.5'))).toEqual(true);
+  });
+
+  it('IPv6 subnet rate limiting is not suppressed by the unique-IP gate', () => {
+    // For IPv6, resolveSubnetFromIp returns the IP itself as the subnet key.
+    // The unique-IP count for such a key is always 1, so the gate must be skipped
+    // to avoid permanently blocking IPv6 subnet blocks.
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 2 });
+    const makeReq = (ip: string) => ({ headers: { host: 'somehost' }, socket: { remoteAddress: ip } } as IncomingMessage);
+    qos.shouldThrottleRequest(makeReq('2001:db8::1')); // first hit — tracked
+    // Rate is now exceeded for the IPv6 "subnet" key; gate must not suppress the block
+    expect(qos.shouldThrottleRequest(makeReq('2001:db8::1'))).toEqual(BadActorType.badSubnet);
+  });
+
   it('subnet whitelisted IPs are not flagged as badSubnet', () => {
-    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, subnetWhitelist: new Set(['1.2.3.0']) });
+    const qos = new ConnectQOS({ maxAge: 1000, minSubnetRate: 1, maxSubnetRate: 1, minSubnetUniqueIps: 1, subnetWhitelist: new Set(['1.2.3.0']) });
     // Both requests from 1.2.3.4 (subnet 1.2.3.0/24 is whitelisted) should never get badSubnet
     expect(qos.shouldThrottleRequest({
       headers: { host: 'somehost' },
@@ -575,6 +629,7 @@ describe('shouldThrottleRequest', () => {
       maxSubnetRateHostViolation: 1,
       minSubnetRate: 1,
       maxSubnetRate: 10000,
+      minSubnetUniqueIps: 1,
       maxAge: 1000
     });
     qos.metrics.hostRatioViolations.add('a');
@@ -641,6 +696,7 @@ describe('cluster integration', () => {
     const mockRedisClient = {
       pipeline: jest.fn().mockReturnValue({
         zincrby: jest.fn().mockReturnThis(),
+        zadd: jest.fn().mockReturnThis(),
         zrangebyscore: jest.fn().mockReturnThis(),
         zremrangebyrank: jest.fn().mockReturnThis(),
         incrby: jest.fn().mockReturnThis(),
@@ -656,6 +712,7 @@ describe('cluster integration', () => {
         redis: { client: mockRedisClient },
         syncIntervalMs: 2000,
         clusterMaxSubnetRate: 200,
+        clusterMinSubnetUniqueIps: 1, // disable unique-IP gate for this test
       },
     });
 

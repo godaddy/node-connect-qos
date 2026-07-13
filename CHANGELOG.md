@@ -1,3 +1,7 @@
+## 5.8.0
+
+- **Feature** Add support for `minSubnetUniqueIps` and `clusterMinSubnetUniqueIps`
+
 ## 5.7.0
 
 - **Feature** Add cluster-wide rate limiting via shared Redis/Valkey sorted sets (`ClusterSync`)

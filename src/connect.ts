@@ -51,10 +51,17 @@ export class ConnectQOS {
     this.#errorResponseDelay = errorResponseDelay;
     this.#subnetMaskBits = subnetMaskBits;
 
+    const resolvedMinSubnetUniqueIps = resolveUniqueIpThreshold(
+      metricOptions.minSubnetUniqueIps ?? 0.5, subnetMaskBits
+    );
+
     if (cluster) {
       this.#clusterSync = new ClusterSync({
         ...cluster,
         windowMs: metricOptions.maxAge ?? 10000,
+        clusterMinSubnetUniqueIps: resolveUniqueIpThreshold(
+          cluster.clusterMinSubnetUniqueIps ?? 0.5, subnetMaskBits
+        ),
       });
       this.#clusterSync.start();
     }
@@ -65,10 +72,11 @@ export class ConnectQOS {
     const userOnTrack = metricOptions.onTrack;
     this.#metrics = new Metrics({
       ...metricOptions,
+      minSubnetUniqueIps: resolvedMinSubnetUniqueIps,
       onTrack: (this.#clusterSync || userOnTrack)
-        ? (type, key) => {
-          this.#clusterSync?.recordHit(type, key);
-          userOnTrack?.(type, key);
+        ? (type, key, ip) => {
+          this.#clusterSync?.recordHit(type, key, ip);
+          userOnTrack?.(type, key, ip);
         }
         : undefined,
     });
@@ -321,16 +329,31 @@ export class ConnectQOS {
     const sourceStr: string = this.resolveSubnet(source);
     const sourceInfo = this.#metrics.getSubnetInfo(sourceStr);
 
-    const status = getStatus(sourceInfo, {
+    let status = getStatus(sourceInfo, {
       minRate,
       lagRatio: this.lagRatio,
       rateRange
     });
 
+    if (status === ActorStatus.Bad) {
+      const minUnique = this.#metrics.minSubnetUniqueIps;
+      // Skip for IPv6: the subnet key is the IP itself, so the unique-IP count is
+      // always 1 and the gate would permanently suppress every IPv6 subnet block.
+      if (minUnique > 1 && !sourceStr.includes(':')) {
+        const uniqueCount = this.#metrics.getSubnetUniqueIpCount(sourceStr);
+        // Only apply the gate when IP tracking data is present. When count=0 (e.g. direct
+        // isBadSubnet call without request context), fall through to the rate-only decision.
+        if (uniqueCount > 0 && uniqueCount < minUnique) {
+          status = ActorStatus.Good;
+        }
+      }
+    }
+
     if (track && status === ActorStatus.Good) {
       // only track if we're NOT throttling
-      // forward cache to avoid additional lookup
-      this.#metrics.trackSubnet(sourceStr, sourceInfo as CacheItem);
+      // forward cache to avoid additional lookup; pass IP for unique-IP gate tracking
+      const ip = typeof source !== 'string' ? this.resolveIp(source) : undefined;
+      this.#metrics.trackSubnet(sourceStr, sourceInfo as CacheItem, ip);
     }
 
     return status;
@@ -345,7 +368,7 @@ export class ConnectQOS {
     this.#metrics.trackHost(host);
     const ip = this.resolveIp(req);
     this.#metrics.trackIp(ip);
-    this.#metrics.trackSubnet(resolveSubnetFromIp(ip, this.#subnetMaskBits));
+    this.#metrics.trackSubnet(resolveSubnetFromIp(ip, this.#subnetMaskBits), undefined, ip);
   }
 }
 
@@ -353,6 +376,21 @@ export type GetStatusOptions = {
   minRate: number,
   rateRange: number,
   lagRatio: number
+}
+
+// Resolves a minSubnetUniqueIps / clusterMinSubnetUniqueIps value to an absolute integer count.
+// A value in (0, 1) is treated as a fraction of the subnet's host addresses:
+//   0.5 on /24 (256 hosts) → ceil(256 * 0.5) = 128
+// A value >= 1 is used as-is (rounded to the nearest integer, minimum 1).
+// Zero or negative values resolve to 1 (gate disabled — any single IP suffices).
+function resolveUniqueIpThreshold(value: number, subnetMaskBits: SubnetMaskBits): number {
+  if (value > 0 && value < 1) {
+    return Math.ceil((1 << (32 - subnetMaskBits)) * value);
+  }
+  if (value >= 1) {
+    return Math.max(1, Math.round(value));
+  }
+  return 1;
 }
 
 function getStatus(sourceInfo: ActorStatus|CacheItem|undefined, {

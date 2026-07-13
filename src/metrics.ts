@@ -1,6 +1,7 @@
 import LRU from 'lru-cache';
+import { normalizeIp } from './util';
 
-export type OnTrackFn = (type: 'ip' | 'subnet' | 'host', key: string) => void;
+export type OnTrackFn = (type: 'ip' | 'subnet' | 'host', key: string, ip?: string) => void;
 
 export type MetricsOptions = {
   historySize?: number;
@@ -14,6 +15,7 @@ export type MetricsOptions = {
   minSubnetRate?: number;
   maxSubnetRate?: number;
   maxSubnetRateHostViolation?: number;
+  minSubnetUniqueIps?: number;
   hostWhitelist?: Set<string>;
   ipWhitelist?: Set<string>;
   subnetWhitelist?: Set<string>;
@@ -51,6 +53,7 @@ export const DEFAULT_MAX_IP_RATE_BUSY_HOST: number = 0; // disabled
 export const DEFAULT_MIN_SUBNET_RATE: number = 0; // disabled
 export const DEFAULT_MAX_SUBNET_RATE: number = 0; // disabled
 export const DEFAULT_MAX_SUBNET_RATE_BUSY_HOST: number = 0; // disabled
+export const DEFAULT_MIN_SUBNET_UNIQUE_IPS: number = 1; // standalone Metrics default; ConnectQOS uses 50% of subnet size
 export const DEFAULT_HOST_WHITELIST = ['localhost'];
 export const DEFAULT_IP_WHITELIST = [];
 export const DEFAULT_SUBNET_WHITELIST = [];
@@ -69,6 +72,7 @@ export class Metrics {
       minSubnetRate = DEFAULT_MIN_SUBNET_RATE,
       maxSubnetRate = DEFAULT_MAX_SUBNET_RATE,
       maxSubnetRateHostViolation = DEFAULT_MAX_SUBNET_RATE_BUSY_HOST,
+      minSubnetUniqueIps = DEFAULT_MIN_SUBNET_UNIQUE_IPS,
       hostWhitelist = new Set(DEFAULT_HOST_WHITELIST),
       ipWhitelist = new Set(DEFAULT_IP_WHITELIST),
       subnetWhitelist = new Set(DEFAULT_SUBNET_WHITELIST),
@@ -89,6 +93,7 @@ export class Metrics {
     this.#hosts = new LRU(lruOptions);
     this.#ips = new LRU(lruOptions);
     this.#subnets = new LRU(lruOptions);
+    this.#subnetIpTimestamps = new LRU({ max: historySize, allowStale: false, updateAgeOnGet: true, updateAgeOnHas: false });
     this.#historySize = historySize;
     this.#maxAge = maxAge;
     this.#minHostRate = minHostRate;
@@ -104,6 +109,7 @@ export class Metrics {
     this.#maxSubnetRate = maxSubnetRate;
     this.#maxSubnetRateHostViolation = maxSubnetRateHostViolation;
     this.#minSubnetRequests = Math.ceil(minSubnetRate * (maxAge/1000));
+    this.#minSubnetUniqueIps = Math.max(1, Math.round(minSubnetUniqueIps));
     this.#hostWhitelist = hostWhitelist;
     this.#ipWhitelist = ipWhitelist;
     this.#subnetWhitelist = subnetWhitelist;
@@ -113,6 +119,7 @@ export class Metrics {
   #hosts: LRU<string, CacheItem>;
   #ips: LRU<string, CacheItem>;
   #subnets: LRU<string, CacheItem>;
+  #subnetIpTimestamps: LRU<string, Map<string, number>>;
   #historySize: number;
   #maxAge: number;
   #minHostRate: number;
@@ -131,6 +138,7 @@ export class Metrics {
   #maxSubnetRate: number;
   #maxSubnetRateHostViolation: number;
   #minSubnetRequests: number;
+  #minSubnetUniqueIps: number;
   #hostWhitelist: Set<string>;
   #ipWhitelist: Set<string>;
   #subnetWhitelist: Set<string>;
@@ -186,6 +194,10 @@ export class Metrics {
 
   get maxSubnetRateHostViolation(): number {
     return this.#maxSubnetRateHostViolation;
+  }
+
+  get minSubnetUniqueIps(): number {
+    return this.#minSubnetUniqueIps;
   }
 
   get historySize(): number {
@@ -278,14 +290,54 @@ export class Metrics {
     });
   }
 
-  trackSubnet(source: string, cache?: CacheItem): CacheItem|undefined {
+  trackSubnet(source: string, cache?: CacheItem, ip?: string): CacheItem|undefined {
     if (this.#subnetWhitelist.has(source)) return;
-    this.#onTrack?.('subnet', source);
+    this.#onTrack?.('subnet', source, ip);
+    // Skip IPv6 keys: they are the IP itself so unique-IP count is always 1 and the
+    // gate is not applied to them; tracking would add work without any benefit.
+    if (ip && this.#minSubnetUniqueIps > 1 && this.#minSubnetRate > 0 && !source.includes(':')) {
+      const now = Date.now();
+      let ipMap = this.#subnetIpTimestamps.get(source);
+      if (!ipMap) {
+        ipMap = new Map();
+        this.#subnetIpTimestamps.set(source, ipMap);
+      }
+      // Prune stale entries before checking the cap so stale IPs don't hold
+      // slots that prevent new IPs from being tracked.
+      const cutoff = now - this.#maxAge;
+      for (const [existingIp, ts] of ipMap) {
+        if (ts < cutoff) ipMap.delete(existingIp);
+      }
+      // Normalize IPv4-mapped IPv6 (::ffff:a.b.c.d → a.b.c.d) so the same physical
+      // client is not double-counted when observed via both address forms.
+      const normalizedIp = normalizeIp(ip);
+      // Refresh already-tracked IPs unconditionally; only add new IPs when below
+      // the cap so the map (and the prune walk above) stay bounded at minSubnetUniqueIps.
+      if (ipMap.has(normalizedIp) || ipMap.size < this.#minSubnetUniqueIps) {
+        ipMap.set(normalizedIp, now);
+      }
+    }
     return track(source, {
       lru: this.#subnets,
       cache,
       minRate: this.#minSubnetRate
     });
+  }
+
+  getSubnetUniqueIpCount(source: string): number {
+    const ipMap = this.#subnetIpTimestamps.get(source);
+    if (!ipMap) return 0;
+    const cutoff = Date.now() - this.#maxAge;
+    let count = 0;
+    for (const [ip, ts] of ipMap) {
+      if (ts >= cutoff) {
+        count++;
+      } else {
+        ipMap.delete(ip);
+      }
+    }
+    if (ipMap.size === 0) this.#subnetIpTimestamps.delete(source);
+    return count;
   }
 }
 
